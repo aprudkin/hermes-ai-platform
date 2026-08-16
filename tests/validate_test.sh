@@ -22,6 +22,13 @@ cp -R "$repo_root/." "$fixture_root/repo"
 limited_bin="$fixture_root/limited-bin"
 mkdir -p "$limited_bin"
 ln -s "$(command -v rg)" "$limited_bin/rg"
+for unavailable_command in shellcheck terraform ansible-playbook docker; do
+  cat >"$limited_bin/$unavailable_command" <<'FAKE'
+#!/usr/bin/env bash
+exit 127
+FAKE
+  chmod +x "$limited_bin/$unavailable_command"
+done
 limited_path="$limited_bin:/usr/bin:/bin"
 
 set +e
@@ -33,7 +40,7 @@ set -e
 
 [[ "$status" -ne 0 ]] \
   || fail "strict --all validation must fail when a required tool is unavailable"
-[[ "$output" == *"required command not found: shellcheck"* ]] \
+[[ "$output" == *"required command is not runnable: shellcheck"* ]] \
   || fail "strict --all validation must name the first missing required tool"
 [[ "$output" != *"SKIP ShellCheck"* ]] \
   || fail "strict --all validation must not disguise missing required checks as skips"
