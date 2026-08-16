@@ -4,10 +4,19 @@ Implemented local and deployment-time checks:
 
 - Terraform format and schema validation without apply;
 - Ansible syntax/lint and post-deployment runtime verification;
-- Compose schema validation when Docker is available;
+- Compose schema validation as a required strict-gate check, or an explicit
+  `SKIP` only in opportunistic `scripts/validate.sh --local` mode;
 - container health through the loopback Hermes `/health` endpoint;
 - profile existence through `hermes profile show`;
 - bounded Docker log rotation and persistent `/opt/hermes/data` state.
+
+Profile reconciliation follows the CLI contract in the pinned Hermes
+`v2026.8.16` source. [`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/hermes_cli/main.py#L10266-L10281)
+uses exit 1 with `does not exist` for a missing named profile, while
+[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/hermes_cli/config.py#L5429-L5441)
+uses exit 1 with `Config key not set` for a missing key. The role tolerates
+only those two documented absence results; every other non-zero query result
+fails before create or set operations.
 
 Not implemented in Minimal: automated backup/restore, monitoring/alerting,
 image upgrade automation, DNS, TLS, public dashboard/API access, or disaster

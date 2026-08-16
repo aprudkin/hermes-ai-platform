@@ -169,6 +169,135 @@ run_ansible() {
       --extra-vars "{\"hermes_ssh_source_cidrs\":$ssh_cidrs_json}"
 }
 
+current_phase=""
+last_completed_phase="none"
+inventory_path=""
+
+report_deploy_failure() {
+  local status="$1"
+  printf 'ERROR: Hermes Minimal deployment failed.\n' >&2
+  printf 'Failed phase: %s\n' "$current_phase" >&2
+  printf 'Last completed phase: %s\n' "$last_completed_phase" >&2
+  printf '%s\n' \
+    'Safe resume: fix the reported error, inspect any external state created by completed phases, then rerun the same confirmed deploy command. No automatic cleanup was attempted.' \
+    >&2
+  exit "$status"
+}
+
+run_phase() {
+  local status
+  current_phase="$1"
+  shift
+  set +e
+  (set -e; "$@")
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    report_deploy_failure "$status"
+  fi
+  last_completed_phase="$current_phase"
+}
+
+run_phase_capture() {
+  local destination="$1"
+  local captured
+  local status
+  current_phase="$2"
+  shift 2
+  set +e
+  captured="$(set -e; "$@")"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    report_deploy_failure "$status"
+  fi
+  printf -v "$destination" '%s' "$captured"
+  last_completed_phase="$current_phase"
+}
+
+apply_terraform_plan() {
+  terraform -chdir="$terraform_dir" apply -input=false -auto-approve \
+    "$generated_dir/terraform/hermes.tfplan"
+}
+
+deploy_new_target() {
+  run_phase infrastructure-plan \
+    terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
+  run_phase provision apply_terraform_plan
+  run_phase_capture host resolve-target \
+    terraform -chdir="$terraform_dir" output -raw server_ipv4
+  ssh_user="root"
+}
+
+deploy_runtime() {
+  if [[ -z "$inventory_path" ]]; then
+    run_phase_capture inventory_path inventory \
+      write_inventory "$host" "$ssh_user" "$private_key"
+  else
+    last_completed_phase="inventory"
+  fi
+  run_phase configure \
+    run_ansible "$inventory_path" "$hermes_env" "$model_provider" "$model" "$ssh_cidrs_json"
+  run_phase verify \
+    "$repo_root/scripts/validate.sh" --runtime --inventory "$inventory_path"
+  printf 'Hermes Minimal deployment verified successfully.\n'
+}
+
+validate_common_request() {
+  "$repo_root/scripts/validate.sh" --structure
+  [[ "${#ssh_source_cidrs[@]}" -gt 0 ]] \
+    || die "at least one --ssh-source-cidr is required"
+  ssh_cidrs_json="$(cidrs_json "${ssh_source_cidrs[@]}")"
+}
+
+prepare_new_request() {
+  validate_location "$location"
+  [[ -n "$hcloud_ssh_key_name" ]] || die "--hcloud-ssh-key-name is required"
+  [[ -n "$public_key" ]] || die "--ssh-public-key is required"
+  validate_public_key "$public_key"
+}
+
+prepare_existing_request() {
+  validate_host "$host"
+  [[ -n "$ssh_user" ]] || die "--ssh-user is required"
+  [[ -n "$private_key" ]] || die "--ssh-private-key is required"
+  validate_user "$ssh_user"
+  validate_key_path "$private_key"
+  inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
+}
+
+validate_deploy_request() {
+  [[ "$confirmed" == "true" ]] || die "deploy requires --confirm-external-mutation"
+  [[ -n "$private_key" ]] || die "--ssh-private-key is required"
+  [[ -n "$hermes_env" ]] || die "--hermes-env is required"
+  [[ -n "$model_provider" ]] || die "--model-provider is required"
+  [[ -n "$model" ]] || die "--model is required"
+  if [[ "$target" == "new" ]]; then
+    validate_key_path "$private_key"
+  fi
+  validate_hermes_env "$hermes_env" "$model_provider"
+}
+
+dispatch_plan() {
+  case "$target" in
+    new)
+      terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
+      ansible_syntax_plan "$repo_root/ansible/inventory.example.ini"
+      ;;
+    existing)
+      ansible_syntax_plan "$inventory_path"
+      ;;
+  esac
+}
+
+dispatch_deploy() {
+  last_completed_phase="request-validation"
+  if [[ "$target" == "new" ]]; then
+    deploy_new_target
+  fi
+  deploy_runtime
+}
+
 action="${1:-}"
 target="${2:-}"
 if [[ -z "$action" ]]; then
@@ -234,54 +363,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-"$repo_root/scripts/validate.sh" --structure
-[[ "${#ssh_source_cidrs[@]}" -gt 0 ]] || die "at least one --ssh-source-cidr is required"
-ssh_cidrs_json="$(cidrs_json "${ssh_source_cidrs[@]}")"
+validate_common_request
 
 if [[ "$target" == "new" ]]; then
-  validate_location "$location"
-  [[ -n "$hcloud_ssh_key_name" ]] || die "--hcloud-ssh-key-name is required"
-  [[ -n "$public_key" ]] || die "--ssh-public-key is required"
-  validate_public_key "$public_key"
-
-  if [[ "$action" == "plan" ]]; then
-    terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
-    ansible_syntax_plan "$repo_root/ansible/inventory.example.ini"
-    exit 0
-  fi
-
-  [[ "$confirmed" == "true" ]] || die "deploy requires --confirm-external-mutation"
-  [[ -n "$private_key" ]] || die "--ssh-private-key is required"
-  [[ -n "$hermes_env" ]] || die "--hermes-env is required"
-  [[ -n "$model_provider" ]] || die "--model-provider is required"
-  [[ -n "$model" ]] || die "--model is required"
-  validate_key_path "$private_key"
-  validate_hermes_env "$hermes_env" "$model_provider"
-  terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
-  terraform -chdir="$terraform_dir" apply -input=false -auto-approve "$generated_dir/terraform/hermes.tfplan"
-  host="$(terraform -chdir="$terraform_dir" output -raw server_ipv4)"
-  ssh_user="root"
+  prepare_new_request
 else
-  validate_host "$host"
-  [[ -n "$ssh_user" ]] || die "--ssh-user is required"
-  [[ -n "$private_key" ]] || die "--ssh-private-key is required"
-  validate_user "$ssh_user"
-  validate_key_path "$private_key"
-
-  inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
-  if [[ "$action" == "plan" ]]; then
-    ansible_syntax_plan "$inventory_path"
-    exit 0
-  fi
-
-  [[ "$confirmed" == "true" ]] || die "deploy requires --confirm-external-mutation"
-  [[ -n "$hermes_env" ]] || die "--hermes-env is required"
-  [[ -n "$model_provider" ]] || die "--model-provider is required"
-  [[ -n "$model" ]] || die "--model is required"
-  validate_hermes_env "$hermes_env" "$model_provider"
+  prepare_existing_request
 fi
 
-inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
-run_ansible "$inventory_path" "$hermes_env" "$model_provider" "$model" "$ssh_cidrs_json"
-"$repo_root/scripts/validate.sh" --runtime --inventory "$inventory_path"
-printf 'Hermes Minimal deployment verified successfully.\n'
+case "$action" in
+  plan)
+    dispatch_plan
+    ;;
+  deploy)
+    validate_deploy_request
+    dispatch_deploy
+    ;;
+esac

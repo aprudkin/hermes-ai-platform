@@ -11,3 +11,11 @@ hermes_profiles:
     description: Implements maintainable code through tested vertical slices.
   - name: research
     description: Researches current primary sources and separates evidence from inference.
+hermes_profile_names: "{{ ['default'] + (hermes_profiles | map(attribute='name') | list) }}"
+hermes_desired_profile_config:
+  - key: model.provider
+    value: "{{ hermes_model_provider }}"
+  - key: model.default
+    value: "{{ hermes_model }}"
+  - key: tool_loop_guardrails.hard_stop_enabled
+    value: "true"

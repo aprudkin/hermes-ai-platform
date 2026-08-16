@@ -1,0 +1,92 @@
+---
+- name: Query named profiles through the Hermes CLI
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - profile
+      - show
+      - "{{ item.name }}"
+  loop: "{{ hermes_profiles }}"
+  register: hermes_profile_queries
+  changed_when: false
+  failed_when: >-
+    hermes_profile_queries.rc != 0 and
+    not (
+      hermes_profile_queries.rc == 1 and
+      (hermes_profile_queries.stdout | trim) ==
+        ("Error: Profile '" ~ item.name ~ "' does not exist.") and
+      (hermes_profile_queries.stderr | trim) == ""
+    )
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create missing Hermes profiles from the default runtime
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - profile
+      - create
+      - "{{ item.item.name }}"
+      - --clone
+      - --no-alias
+      - --description
+      - "{{ item.item.description }}"
+  loop: "{{ hermes_profile_queries.results }}"
+  when: item.rc == 1
+  changed_when: true
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Read desired configuration for every Hermes profile
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item.0 }}"
+      - config
+      - get
+      - "{{ item.1.key }}"
+  loop: "{{ hermes_profile_names | product(hermes_desired_profile_config) | list }}"
+  register: hermes_profile_config_queries
+  changed_when: false
+  failed_when: >-
+    hermes_profile_config_queries.rc != 0 and
+    not (
+      hermes_profile_config_queries.rc == 1 and
+      (hermes_profile_config_queries.stdout | trim) == "" and
+      (hermes_profile_config_queries.stderr | trim) ==
+        ("Config key not set: " ~ item.1.key)
+    )
+  loop_control:
+    label: "{{ item.0 }}:{{ item.1.key }}"
+
+- name: Reconcile changed Hermes profile configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item.item.0 }}"
+      - config
+      - set
+      - "{{ item.item.1.key }}"
+      - "{{ item.item.1.value }}"
+  loop: "{{ hermes_profile_config_queries.results }}"
+  when: >-
+    item.rc == 1 or
+    item.stdout != (item.item.1.value | string)
+  changed_when: true
+  notify: Restart Hermes
+  loop_control:
+    label: "{{ item.item.0 }}:{{ item.item.1.key }}"

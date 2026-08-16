@@ -25,11 +25,15 @@ network, monitoring, backups, and stages 05–31 are not part of Minimal.
 
 ## Safe entry points
 
-Run all locally available checks:
+Run the strict validation gate (all required native tools must be runnable):
 
 ```bash
 ./installer/install.sh validate
 ```
+
+Use `./scripts/validate.sh --local` only for an opportunistic workstation pass.
+It reports unavailable native tools as `SKIP` and therefore is not readiness
+proof.
 
 Plan a new server without applying it (requires `HCLOUD_TOKEN` in the process
 environment and the already registered key name):

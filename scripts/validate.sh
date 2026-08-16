@@ -4,6 +4,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 mode="${1:---all}"
+allow_missing_tools="false"
+if [[ "$mode" == "--local" ]]; then
+  allow_missing_tools="true"
+fi
 
 error() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -47,11 +51,19 @@ require_artifacts() {
 
 need_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    printf 'SKIP %s (tool not installed)\n' "$2"
+    if [[ "$allow_missing_tools" == "true" ]]; then
+      printf 'SKIP %s (tool not installed)\n' "$2"
+    else
+      error "required command not found: $1"
+    fi
     return 1
   fi
   if ! "$1" --version >/dev/null 2>&1; then
-    printf 'SKIP %s (installed command is not runnable)\n' "$2"
+    if [[ "$allow_missing_tools" == "true" ]]; then
+      printf 'SKIP %s (installed command is not runnable)\n' "$2"
+    else
+      error "required command is not runnable: $1"
+    fi
     return 1
   fi
 }
@@ -67,12 +79,17 @@ validate_shell() {
   if need_command shellcheck "ShellCheck"; then
     shellcheck "${shell_files[@]}"
     printf 'PASS ShellCheck\n'
+  elif [[ "$allow_missing_tools" != "true" ]]; then
+    return 1
   fi
 }
 
 validate_terraform() {
   if ! need_command terraform "Terraform fmt/validate"; then
-    return 0
+    if [[ "$allow_missing_tools" == "true" ]]; then
+      return 0
+    fi
+    return 1
   fi
   terraform -chdir="$repo_root/terraform" fmt -check -recursive
   terraform -chdir="$repo_root/terraform" init -backend=false -input=false >/dev/null
@@ -82,7 +99,10 @@ validate_terraform() {
 
 validate_ansible() {
   if ! need_command ansible-playbook "Ansible syntax"; then
-    return 0
+    if [[ "$allow_missing_tools" == "true" ]]; then
+      return 0
+    fi
+    return 1
   fi
   ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
     ansible-playbook --syntax-check \
@@ -94,12 +114,17 @@ validate_ansible() {
   if need_command ansible-lint "ansible-lint"; then
     (cd "$repo_root" && ansible-lint ansible/site.yml)
     printf 'PASS ansible-lint\n'
+  elif [[ "$allow_missing_tools" != "true" ]]; then
+    return 1
   fi
 }
 
 validate_compose() {
   if ! need_command docker "docker compose config"; then
-    return 0
+    if [[ "$allow_missing_tools" == "true" ]]; then
+      return 0
+    fi
+    return 1
   fi
   HERMES_DATA_DIR=/opt/hermes/data docker compose \
     --file "$repo_root/docker/docker-compose.yml" config --quiet
@@ -162,11 +187,21 @@ case "$mode" in
     bash "$repo_root/tests/run.sh"
     printf 'PASS behavioral tests\n'
     ;;
+  --local)
+    require_artifacts
+    validate_shell
+    validate_terraform
+    validate_ansible
+    validate_compose
+    validate_secrets
+    bash "$repo_root/tests/run.sh"
+    printf 'PASS locally available validation and behavioral tests\n'
+    ;;
   --runtime)
     validate_runtime "$@"
     ;;
   *)
-    error "Usage: scripts/validate.sh [--all|--structure|--static|--secrets|--runtime ...]"
+    error "Usage: scripts/validate.sh [--all|--local|--structure|--static|--secrets|--runtime ...]"
     exit 2
     ;;
 esac

@@ -7,8 +7,13 @@
 ```
 
 The command fails if a required artifact, schema, syntax check, behavioral
-test, or available native validator fails. Missing optional local tools are
-reported as `SKIP`, not as passed checks.
+test, or required native validator is missing or fails. It is the strict
+readiness gate and never treats a skipped required check as success.
+
+For an explicitly opportunistic workstation pass, run
+`./scripts/validate.sh --local`. That mode executes every available check and
+the behavioral suite, but reports unavailable native tools as `SKIP`; it is not
+readiness proof.
 
 ## 2A. Plan a new Hetzner server
 

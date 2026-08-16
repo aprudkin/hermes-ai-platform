@@ -11,6 +11,10 @@ Required controller tools are Bash, Python 3, Terraform, Ansible, and the
 `community.general` collection. Docker and Compose are installed on the target
 by Ansible. ShellCheck and ansible-lint are required for the full development
 validation gate. No tool is installed system-wide by repository scripts.
+`./installer/install.sh validate` and `./scripts/validate.sh --all` are strict:
+missing or unrunnable required tools fail the gate. The explicitly weaker
+`./scripts/validate.sh --local` mode reports unavailable native tools as
+`SKIP` and must not be used as readiness evidence.
 
 ## Inputs
 
