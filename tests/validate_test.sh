@@ -4,6 +4,12 @@ set -euo pipefail
 # shellcheck source=tests/test_helper.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helper.sh"
 
+grep -Eq 'apt-get install.*ripgrep' \
+  "$repo_root/.github/workflows/validate.yml" || \
+  fail "CI must install ripgrep before running the fail-closed secret scan"
+
+printf 'PASS CI installs the validator secret-scan dependency\n'
+
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "$fixture_root"' EXIT
 cp -R "$repo_root/." "$fixture_root/repo"
