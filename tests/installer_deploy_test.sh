@@ -54,7 +54,22 @@ case " $* " in
 esac
 FAKE
 
-chmod +x "$fake_bin/terraform" "$fake_bin/ansible-playbook"
+cat >"$fake_bin/stat" <<'FAKE'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -c)
+    printf '600\n'
+    ;;
+  -f)
+    printf 'File: fixture\nID: fixture Namelen: 255 Type: ext2/ext3\n'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+FAKE
+
+chmod +x "$fake_bin/terraform" "$fake_bin/ansible-playbook" "$fake_bin/stat"
 
 run_installer() {
   local output_path="$1"

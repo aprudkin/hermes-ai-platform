@@ -87,7 +87,7 @@ cidrs_json() {
 
 file_mode() {
   local source_file="$1"
-  stat -f '%Lp' "$source_file" 2>/dev/null || stat -c '%a' "$source_file"
+  stat -c '%a' "$source_file" 2>/dev/null || stat -f '%Lp' "$source_file"
 }
 
 validate_hermes_env() {
