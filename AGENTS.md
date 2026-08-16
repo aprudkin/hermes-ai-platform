@@ -72,7 +72,7 @@ Obtain explicit user confirmation immediately before any action that:
 - deploys, restarts, upgrades, or removes a remote service;
 - mutates GitHub, another remote repository, or CI settings.
 
-The current Hetzner project context is `hermes`. Germany is the requested country, but the exact German location must remain an explicit input until selected. The intended public SSH key is `~/.ssh/luk.pub`. These facts do not authorize cloud changes.
+The current Hetzner project context is `hermes`. Finland location `hel1` is selected for the future Minimal deployment, replacing the earlier Germany-only constraint. Use a cost-optimized server type only after checking its live availability and price in `hel1`; the current Terraform default is `cx23`. The intended public SSH key is `~/.ssh/luk.pub`. These facts do not authorize cloud changes.
 
 ## Secrets
 
@@ -90,6 +90,8 @@ Configuration presence is not behavioral proof. Run the checks relevant to every
 - `docker compose config` and container health checks;
 - unit and integration tests for parsing, generation, failure paths, and validation;
 - secret scanning and checks that generated artifacts remain ignored.
+
+Keep portability and failure-path fixtures hermetic across macOS and Linux: explicitly control every command whose behavior, availability, or failure is under test; do not infer tool absence from the ambient PATH layout.
 
 Do not install system-wide tools without confirmation. If a required tool is unavailable, report the skipped check and do not call it passing.
 
