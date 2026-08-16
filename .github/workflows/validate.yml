@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+
+      - name: Install local validation dependencies
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          'ansible-core>=2.18,<2.20' 'ansible-lint>=25,<26'
+
+      - name: Install required Ansible collections
+        run: ansible-galaxy collection install --requirements-file ansible/requirements.yml
+
+      - name: Run real validation gates
+        run: ./scripts/validate.sh --all

@@ -1,0 +1,24 @@
+# Local credentials and generated configuration
+.env
+*.tfvars
+!*.tfvars.example
+*.auto.tfvars
+ansible/inventory.ini
+.generated/
+
+# Terraform state and providers
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+
+# Ansible runtime artifacts
+*.retry
+ansible/facts/
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/

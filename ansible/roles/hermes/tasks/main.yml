@@ -1,0 +1,225 @@
+---
+- name: Create Hermes directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ hermes_app_dir }}"
+    - "{{ hermes_data_dir }}"
+
+- name: Install Compose definition
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../docker/docker-compose.yml"
+    dest: "{{ hermes_app_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Hermes
+
+- name: Install Hermes credentials without logging content
+  ansible.builtin.copy:
+    src: "{{ hermes_env_source }}"
+    dest: "{{ hermes_data_dir }}/.env"
+    owner: "10000"
+    group: "10000"
+    mode: "0600"
+  no_log: true
+  notify: Restart Hermes
+
+- name: Start Hermes runtime
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ hermes_app_dir }}/docker-compose.yml"
+      - up
+      - --detach
+      - --remove-orphans
+  environment:
+    HERMES_DATA_DIR: "{{ hermes_data_dir }}"
+  register: hermes_compose_up
+  changed_when: >-
+    'Started' in hermes_compose_up.stderr or
+    'Created' in hermes_compose_up.stderr or
+    'Recreated' in hermes_compose_up.stderr
+
+- name: Wait for Hermes health check
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{' }}.State.Health.Status{{ '}}' }}"
+      - "{{ hermes_container_name }}"
+  register: hermes_health
+  changed_when: false
+  retries: 24
+  delay: 5
+  until: hermes_health.stdout == "healthy"
+
+- name: Inspect profile markers
+  ansible.builtin.stat:
+    path: "{{ hermes_data_dir }}/profiles/{{ item.name }}/SOUL.md"
+  loop: "{{ hermes_profiles }}"
+  register: hermes_profile_markers
+
+- name: Create supported Hermes profiles from the default runtime
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - profile
+      - create
+      - "{{ item.item.name }}"
+      - --clone
+      - --no-alias
+      - --description
+      - "{{ item.item.description }}"
+  loop: "{{ hermes_profile_markers.results }}"
+  when: not item.stat.exists
+  changed_when: true
+
+- name: Install profile identities
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../profiles/{{ item.name }}/SOUL.md"
+    dest: "{{ hermes_data_dir }}/profiles/{{ item.name }}/SOUL.md"
+    owner: "10000"
+    group: "10000"
+    mode: "0640"
+  loop: "{{ hermes_profiles }}"
+  notify: Restart Hermes
+
+- name: Synchronize credentials into every named profile
+  ansible.builtin.copy:
+    src: "{{ hermes_env_source }}"
+    dest: "{{ hermes_data_dir }}/profiles/{{ item.name }}/.env"
+    owner: "10000"
+    group: "10000"
+    mode: "0600"
+  loop: "{{ hermes_profiles }}"
+  no_log: true
+  notify: Restart Hermes
+
+- name: Read current model provider for every profile
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item }}"
+      - config
+      - get
+      - model.provider
+  loop: "{{ ['default'] + (hermes_profiles | map(attribute='name') | list) }}"
+  register: hermes_current_model_providers
+  failed_when: false
+  changed_when: false
+
+- name: Reconcile changed model providers
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item.item }}"
+      - config
+      - set
+      - model.provider
+      - "{{ hermes_model_provider }}"
+  loop: "{{ hermes_current_model_providers.results }}"
+  when: item.rc != 0 or item.stdout != hermes_model_provider
+  changed_when: true
+  notify: Restart Hermes
+
+- name: Read current model for every profile
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item }}"
+      - config
+      - get
+      - model.default
+  loop: "{{ ['default'] + (hermes_profiles | map(attribute='name') | list) }}"
+  register: hermes_current_models
+  failed_when: false
+  changed_when: false
+
+- name: Reconcile changed models
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item.item }}"
+      - config
+      - set
+      - model.default
+      - "{{ hermes_model }}"
+  loop: "{{ hermes_current_models.results }}"
+  when: item.rc != 0 or item.stdout != hermes_model
+  changed_when: true
+  notify: Restart Hermes
+
+- name: Read tool-loop hard-stop policy for every profile
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item }}"
+      - config
+      - get
+      - tool_loop_guardrails.hard_stop_enabled
+  loop: "{{ ['default'] + (hermes_profiles | map(attribute='name') | list) }}"
+  register: hermes_current_hard_stops
+  failed_when: false
+  changed_when: false
+
+- name: Enable missing unattended tool-loop hard stops
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - --profile
+      - "{{ item.item }}"
+      - config
+      - set
+      - tool_loop_guardrails.hard_stop_enabled
+      - "true"
+  loop: "{{ hermes_current_hard_stops.results }}"
+  when: item.rc != 0 or item.stdout != "true"
+  changed_when: true
+  notify: Restart Hermes
+
+- name: Verify every profile through the Hermes CLI
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ hermes_container_name }}"
+      - hermes
+      - profile
+      - show
+      - "{{ item.name }}"
+  loop: "{{ hermes_profiles }}"
+  changed_when: false

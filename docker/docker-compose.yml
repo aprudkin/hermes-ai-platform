@@ -1,0 +1,28 @@
+name: hermes-minimal
+
+services:
+  hermes:
+    image: nousresearch/hermes-agent:v2026.8.16
+    container_name: hermes
+    init: false
+    restart: unless-stopped
+    network_mode: host
+    command: ["gateway", "run"]
+    environment:
+      HERMES_UID: "${HERMES_UID:-10000}"
+      HERMES_GID: "${HERMES_GID:-10000}"
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: "127.0.0.1"
+    volumes:
+      - ${HERMES_DATA_DIR:-/opt/hermes/data}:/opt/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8642/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

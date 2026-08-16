@@ -1,0 +1,13 @@
+---
+hermes_app_dir: /opt/hermes/app
+hermes_data_dir: /opt/hermes/data
+hermes_container_name: hermes
+hermes_profiles:
+  - name: manager
+    description: Coordinates outcomes, work state, and verification.
+  - name: devops
+    description: Operates infrastructure with guarded changes and runtime proof.
+  - name: coding
+    description: Implements maintainable code through tested vertical slices.
+  - name: research
+    description: Researches current primary sources and separates evidence from inference.
