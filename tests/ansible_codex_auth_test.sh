@@ -65,11 +65,11 @@ runtime_env="$data_dir/.env"
   || fail "Codex subscription auth must be installed at HERMES_HOME/.codex/auth.json"
 cmp -s "$codex_auth" "$installed_auth" \
   || fail "installed Codex auth must preserve the protected source exactly"
-[[ "$(stat -f '%Lp' "$installed_auth" 2>/dev/null || stat -c '%a' "$installed_auth")" == "600" ]] \
+[[ "$(stat -c '%a' "$installed_auth" 2>/dev/null || stat -f '%Lp' "$installed_auth")" == "600" ]] \
   || fail "installed Codex auth must have mode 0600"
 [[ -f "$runtime_env" ]] \
   || fail "the loopback API server must receive a generated runtime credential"
-[[ "$(stat -f '%Lp' "$runtime_env" 2>/dev/null || stat -c '%a' "$runtime_env")" == "600" ]] \
+[[ "$(stat -c '%a' "$runtime_env" 2>/dev/null || stat -f '%Lp' "$runtime_env")" == "600" ]] \
   || fail "the runtime environment must have mode 0600"
 [[ "$(grep -Ec '^API_SERVER_KEY=[0-9a-f]{64}$' "$runtime_env")" == "1" ]] \
   || fail "the runtime environment must contain exactly one strong API server key"
