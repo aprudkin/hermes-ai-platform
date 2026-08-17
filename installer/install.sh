@@ -11,9 +11,9 @@ usage() {
   cat <<'USAGE'
 Usage:
   ./installer/install.sh validate
-  ./installer/install.sh plan new --location fsn1|nbg1 --hcloud-ssh-key-name NAME --ssh-public-key PATH --ssh-source-cidr CIDR
+  ./installer/install.sh plan new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH --ssh-source-cidr CIDR
   ./installer/install.sh plan existing --host HOST --ssh-user USER --ssh-private-key PATH --ssh-source-cidr CIDR
-  ./installer/install.sh deploy new --location fsn1|nbg1 --hcloud-ssh-key-name NAME --ssh-public-key PATH \
+  ./installer/install.sh deploy new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH \
     --ssh-private-key PATH --ssh-source-cidr CIDR --hermes-env PATH --model-provider PROVIDER --model MODEL --confirm-external-mutation
   ./installer/install.sh deploy existing --host HOST --ssh-user USER \
     --ssh-private-key PATH --ssh-source-cidr CIDR --hermes-env PATH --model-provider PROVIDER --model MODEL --confirm-external-mutation
@@ -40,9 +40,14 @@ need_file() {
 
 validate_location() {
   case "$1" in
-    fsn1 | nbg1) ;;
-    *) die "--location must be exactly fsn1 or nbg1" ;;
+    fsn1 | nbg1 | hel1) ;;
+    *) die "--location must be exactly fsn1, nbg1, or hel1" ;;
   esac
+}
+
+validate_server_type() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]*$ ]] \
+    || die "--server-type must be a non-empty Hetzner Cloud server type name"
 }
 
 validate_host() {
@@ -128,9 +133,10 @@ write_inventory() {
 
 terraform_plan() {
   local location="$1"
-  local public_key="$2"
-  local hcloud_ssh_key_name="$3"
-  local ssh_cidrs_json="$4"
+  local server_type="$2"
+  local public_key="$3"
+  local hcloud_ssh_key_name="$4"
+  local ssh_cidrs_json="$5"
   local plan_path="$generated_dir/terraform/hermes.tfplan"
 
   need_command terraform
@@ -138,7 +144,8 @@ terraform_plan() {
   mkdir -p "$(dirname "$plan_path")"
   terraform -chdir="$terraform_dir" init -backend=false -input=false
   terraform -chdir="$terraform_dir" validate
-  TF_VAR_location="$location" TF_VAR_ssh_public_key_path="$public_key" \
+  TF_VAR_location="$location" TF_VAR_server_type="$server_type" \
+  TF_VAR_ssh_public_key_path="$public_key" \
   TF_VAR_hcloud_ssh_key_name="$hcloud_ssh_key_name" \
   TF_VAR_ssh_source_cidrs="$ssh_cidrs_json" \
     terraform -chdir="$terraform_dir" plan -input=false -out="$plan_path"
@@ -222,7 +229,7 @@ apply_terraform_plan() {
 
 deploy_new_target() {
   run_phase infrastructure-plan \
-    terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
+    terraform_plan "$location" "$server_type" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
   run_phase provision apply_terraform_plan
   run_phase_capture host resolve-target \
     terraform -chdir="$terraform_dir" output -raw server_ipv4
@@ -252,6 +259,8 @@ validate_common_request() {
 
 prepare_new_request() {
   validate_location "$location"
+  [[ -n "$server_type" ]] || die "--server-type is required"
+  validate_server_type "$server_type"
   [[ -n "$hcloud_ssh_key_name" ]] || die "--hcloud-ssh-key-name is required"
   [[ -n "$public_key" ]] || die "--ssh-public-key is required"
   validate_public_key "$public_key"
@@ -281,7 +290,7 @@ validate_deploy_request() {
 dispatch_plan() {
   case "$target" in
     new)
-      terraform_plan "$location" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
+      terraform_plan "$location" "$server_type" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
       ansible_syntax_plan "$repo_root/ansible/inventory.example.ini"
       ;;
     existing)
@@ -319,6 +328,7 @@ fi
 shift 2
 
 location=""
+server_type=""
 public_key=""
 hcloud_ssh_key_name=""
 private_key=""
@@ -332,13 +342,14 @@ confirmed="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --location | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --model-provider | --model)
+    --location | --server-type | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --model-provider | --model)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       option="$1"
       value="$2"
       shift 2
       case "$option" in
         --location) location="$value" ;;
+        --server-type) server_type="$value" ;;
         --hcloud-ssh-key-name) hcloud_ssh_key_name="$value" ;;
         --ssh-public-key) public_key="$value" ;;
         --ssh-private-key) private_key="$value" ;;

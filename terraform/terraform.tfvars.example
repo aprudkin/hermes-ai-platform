@@ -1,4 +1,5 @@
-location            = "fsn1" # Or nbg1; choose explicitly.
+location            = "hel1"
+server_type         = "cx23" # Re-check live category, availability, recommendation, and price before every real plan.
 ssh_public_key_path = "~/.ssh/luk.pub"
 hcloud_ssh_key_name = "Luk"
 

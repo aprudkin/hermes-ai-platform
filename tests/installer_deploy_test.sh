@@ -125,7 +125,7 @@ assert_failure_report() {
 
 : >"$command_log"
 run_installer "$fixture_root/new-success.out" \
-  "$repo_root/installer/install.sh" deploy new --location fsn1 \
+  "$repo_root/installer/install.sh" deploy new --location hel1 --server-type cx23 \
     --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
     --ssh-private-key "$private_key" --ssh-source-cidr 192.0.2.10/32 \
     --hermes-env "$provider_env" --model-provider openrouter \
@@ -163,7 +163,7 @@ printf 'PASS confirmed existing-host deploy runs configure and verify phases in 
 : >"$command_log"
 set +e
 FAIL_TERRAFORM_OUTPUT=1 run_installer "$fixture_root/terraform-output-failure.out" \
-  "$repo_root/installer/install.sh" deploy new --location fsn1 \
+  "$repo_root/installer/install.sh" deploy new --location hel1 --server-type cx23 \
     --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
     --ssh-private-key "$private_key" --ssh-source-cidr 192.0.2.10/32 \
     --hermes-env "$provider_env" --model-provider openrouter \

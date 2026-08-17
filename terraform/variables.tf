@@ -1,10 +1,10 @@
 variable "location" {
-  description = "Exact Hetzner Cloud location in Germany. Must be selected explicitly."
+  description = "Exact supported Hetzner Cloud location. Must be selected explicitly."
   type        = string
 
   validation {
-    condition     = contains(["fsn1", "nbg1"], var.location)
-    error_message = "location must be exactly fsn1 or nbg1."
+    condition     = contains(["fsn1", "nbg1", "hel1"], var.location)
+    error_message = "location must be exactly fsn1, nbg1, or hel1."
   }
 }
 
@@ -20,9 +20,13 @@ variable "server_name" {
 }
 
 variable "server_type" {
-  description = "Hetzner Cloud server type."
+  description = "Explicit cost-optimized Hetzner Cloud server type, checked for live availability in the selected location during plan."
   type        = string
-  default     = "cx23"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]*$", var.server_type))
+    error_message = "server_type must be a non-empty Hetzner Cloud server type name."
+  }
 }
 
 variable "image" {

@@ -15,14 +15,14 @@ set -e
 printf 'PASS installer rejects unknown mode\n'
 
 set +e
-output="$("$repo_root/installer/install.sh" plan new --location hel1 --ssh-source-cidr 192.0.2.10/32 --ssh-public-key /dev/null 2>&1)"
+output="$("$repo_root/installer/install.sh" plan new --location ash --server-type cx23 --ssh-source-cidr 192.0.2.10/32 --ssh-public-key /dev/null 2>&1)"
 status=$?
 set -e
 
 [[ "$status" -ne 0 ]] || fail "unsupported Hetzner location must fail before Terraform"
-[[ "$output" == *"fsn1 or nbg1"* ]] || fail "location failure must explain accepted locations"
+[[ "$output" == *"fsn1, nbg1, or hel1"* ]] || fail "location failure must explain accepted locations"
 
-printf 'PASS installer rejects non-German location\n'
+printf 'PASS installer rejects a location outside the supported allowlist\n'
 
 set +e
 output="$("$repo_root/installer/install.sh" plan existing --host '' --ssh-user ubuntu --ssh-source-cidr 192.0.2.10/32 --ssh-private-key /dev/null 2>&1)"

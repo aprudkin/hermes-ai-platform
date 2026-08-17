@@ -17,15 +17,20 @@ readiness proof.
 
 ## 2A. Plan a new Hetzner server
 
-Choose `fsn1` or `nbg1` explicitly. Put `HCLOUD_TOKEN` into the calling
-process through your protected credential mechanism, then run one command:
+Use the selected Finland location `hel1`. Re-check the Hetzner catalog, choose
+an available cost-optimized type explicitly, and put `HCLOUD_TOKEN` into the
+calling process through your protected credential mechanism. The 2026-08-17
+read-only snapshot selected `cx23`; it is not a durable availability or price
+guarantee.
 
 ```bash
-./installer/install.sh plan new --location fsn1 --hcloud-ssh-key-name Luk --ssh-public-key ~/.ssh/luk.pub --ssh-source-cidr 203.0.113.10/32
+./installer/install.sh plan new --location hel1 --server-type cx23 --hcloud-ssh-key-name Luk --ssh-public-key ~/.ssh/luk.pub --ssh-source-cidr 203.0.113.10/32
 ```
 
-Both `fsn1` and `203.0.113.10/32` are documentation examples. Select the German
-location and substitute the real operator CIDR before running a plan.
+`203.0.113.10/32` is a documentation-only CIDR. Substitute the real operator
+network before running a plan. Terraform rejects a type unless live provider
+metadata reports that it is cost-optimized, available, recommended, and not
+deprecated in `hel1`.
 
 This runs Terraform init/validate/plan and Ansible syntax validation. It does
 not apply Terraform or contact a server. The exact registered Hetzner key must

@@ -15,7 +15,8 @@ ansible_log="$fixture_root/ansible.log"
 
 cat >"$fake_bin/terraform" <<'FAKE'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$TERRAFORM_LOG"
+printf 'location=%s server_type=%s args=%s\n' \
+  "${TF_VAR_location:-}" "${TF_VAR_server_type:-}" "$*" >>"$TERRAFORM_LOG"
 FAKE
 cat >"$fake_bin/ansible-playbook" <<'FAKE'
 #!/usr/bin/env bash
@@ -30,7 +31,7 @@ printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestFixtureOnly hermes-test\n' >"$p
 
 env PATH="$fake_bin:$PATH" TERRAFORM_LOG="$terraform_log" \
   ANSIBLE_LOG="$ansible_log" HCLOUD_TOKEN="test-only-token" \
-  "$repo_root/installer/install.sh" plan new --location fsn1 \
+  "$repo_root/installer/install.sh" plan new --location hel1 --server-type cx23 \
     --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 >/dev/null
 
@@ -38,8 +39,28 @@ grep -q 'init ' "$terraform_log" || fail "new-host plan must initialize Terrafor
 grep -q 'validate' "$terraform_log" || fail "new-host plan must validate Terraform"
 grep -q ' plan ' "$terraform_log" || fail "new-host plan must execute Terraform plan"
 ! grep -q 'apply' "$terraform_log" || fail "new-host plan must never execute Terraform apply"
+grep -q 'location=hel1 server_type=cx23 args=.* plan ' "$terraform_log" \
+  || fail "new-host plan must pass the selected hel1 location and server type to Terraform"
 grep -q -- '--syntax-check' "$ansible_log" || fail "new-host plan must syntax-check Ansible"
-printf 'PASS new-host plan checks both layers without apply\n'
+printf 'PASS hel1 new-host plan passes the selected server type and never applies\n'
+
+: >"$terraform_log"
+: >"$ansible_log"
+set +e
+env PATH="$fake_bin:$PATH" TERRAFORM_LOG="$terraform_log" \
+  ANSIBLE_LOG="$ansible_log" HCLOUD_TOKEN="test-only-token" \
+  "$repo_root/installer/install.sh" plan new --location hel1 \
+    --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
+    --ssh-source-cidr 192.0.2.10/32 >"$fixture_root/missing-server-type.out" 2>&1
+missing_server_type_status=$?
+set -e
+
+[[ "$missing_server_type_status" -ne 0 ]] || fail "new-host plan must require an explicit server type"
+[[ ! -s "$terraform_log" ]] || fail "missing server type must fail before Terraform"
+[[ ! -s "$ansible_log" ]] || fail "missing server type must fail before Ansible"
+grep -q -- '--server-type is required' "$fixture_root/missing-server-type.out" \
+  || fail "missing server type failure must identify --server-type"
+printf 'PASS new-host plan requires an explicit server type before external tools\n'
 
 : >"$terraform_log"
 : >"$ansible_log"
@@ -63,7 +84,7 @@ chmod 600 "$provider_env"
 set +e
 env PATH="$fake_bin:$PATH" TERRAFORM_LOG="$terraform_log" \
   ANSIBLE_LOG="$ansible_log" HCLOUD_TOKEN="test-only-token" \
-  "$repo_root/installer/install.sh" deploy new --location fsn1 \
+  "$repo_root/installer/install.sh" deploy new --location hel1 --server-type cx23 \
     --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
     --ssh-private-key "$private_key" --ssh-source-cidr 192.0.2.10/32 \
     --hermes-env "$provider_env" --model-provider openrouter \

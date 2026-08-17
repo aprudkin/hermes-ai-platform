@@ -72,7 +72,7 @@ Obtain explicit user confirmation immediately before any action that:
 - deploys, restarts, upgrades, or removes a remote service;
 - mutates GitHub, another remote repository, or CI settings.
 
-The current Hetzner project context is `hermes`. Finland location `hel1` is selected for the future Minimal deployment, replacing the earlier Germany-only constraint. Use a cost-optimized server type only after checking its live availability and price in `hel1`; the current Terraform default is `cx23`. The intended public SSH key is `~/.ssh/luk.pub`. These facts do not authorize cloud changes.
+The current Hetzner project context is `hermes`. Finland location `hel1` is selected for the future Minimal deployment, replacing the earlier Germany-only constraint. The installer requires an explicit cost-optimized server type after checking its live availability and price in `hel1`; `cx23` is the current documented choice, not a durable default. The intended public SSH key is `~/.ssh/luk.pub`. These facts do not authorize cloud changes.
 
 ## Secrets
 
