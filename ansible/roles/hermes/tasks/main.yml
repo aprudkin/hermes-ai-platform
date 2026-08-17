@@ -1,14 +1,6 @@
 ---
-- name: Create Hermes directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-  loop:
-    - "{{ hermes_app_dir }}"
-    - "{{ hermes_data_dir }}"
+- name: Create Hermes directories with separate ownership boundaries
+  ansible.builtin.include_tasks: create_directories.yml
 
 - name: Install Compose definition
   ansible.builtin.copy:
@@ -19,15 +11,8 @@
     mode: "0644"
   notify: Restart Hermes
 
-- name: Install Hermes credentials without logging content
-  ansible.builtin.copy:
-    src: "{{ hermes_env_source }}"
-    dest: "{{ hermes_data_dir }}/.env"
-    owner: "10000"
-    group: "10000"
-    mode: "0600"
-  no_log: true
-  notify: Restart Hermes
+- name: Install the selected provider credential
+  ansible.builtin.include_tasks: install_credentials.yml
 
 - name: Start Hermes runtime
   ansible.builtin.command:
@@ -46,6 +31,12 @@
     'Started' in hermes_compose_up.stderr or
     'Created' in hermes_compose_up.stderr or
     'Recreated' in hermes_compose_up.stderr
+
+- name: Bootstrap the Hermes-owned Codex subscription session
+  ansible.builtin.include_tasks: bootstrap_codex_auth.yml
+
+- name: Initialize the pinned Hermes runtime configuration
+  ansible.builtin.include_tasks: initialize_runtime.yml
 
 - name: Wait for Hermes health check
   ansible.builtin.command:
@@ -68,8 +59,8 @@
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../profiles/{{ item.name }}/SOUL.md"
     dest: "{{ hermes_data_dir }}/profiles/{{ item.name }}/SOUL.md"
-    owner: "10000"
-    group: "10000"
+    owner: "{{ hermes_runtime_owner }}"
+    group: "{{ hermes_runtime_group }}"
     mode: "0640"
   loop: "{{ hermes_profiles }}"
   notify: Restart Hermes
@@ -78,22 +69,16 @@
   ansible.builtin.copy:
     src: "{{ hermes_env_source }}"
     dest: "{{ hermes_data_dir }}/profiles/{{ item.name }}/.env"
-    owner: "10000"
-    group: "10000"
+    owner: "{{ hermes_runtime_owner }}"
+    group: "{{ hermes_runtime_group }}"
     mode: "0600"
   loop: "{{ hermes_profiles }}"
+  when: hermes_model_provider != "openai-codex"
   no_log: true
   notify: Restart Hermes
 
 - name: Verify every profile through the Hermes CLI
   ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ hermes_container_name }}"
-      - hermes
-      - profile
-      - show
-      - "{{ item.name }}"
+    argv: "{{ hermes_cli_argv_prefix + ['profile', 'show', item.name] }}"
   loop: "{{ hermes_profiles }}"
   changed_when: false

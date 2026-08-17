@@ -18,14 +18,19 @@
         that:
           - ansible_distribution == "Ubuntu"
           - ansible_distribution_version is version("24.04", ">=")
-          - hermes_env_source | default("") | length > 0
+          - >-
+            (hermes_model_provider == "openai-codex" and
+            hermes_codex_auth_source | default("") | length > 0) or
+            (hermes_model_provider != "openai-codex" and
+            hermes_env_source | default("") | length > 0)
           - hermes_model_provider | default("") | length > 0
           - hermes_model | default("") | length > 0
           - hermes_ssh_source_cidrs | default([]) | length > 0
         fail_msg: >-
-          Minimal supports Ubuntu 24.04+ and requires hermes_env_source to point
-          to a controller-local populated Hermes .env file plus explicit
-          model values and administrative SSH source CIDRs.
+          Minimal supports Ubuntu 24.04+ and requires either a populated
+          controller-local Hermes .env for API-key providers or a protected
+          Codex CLI auth file for openai-codex, plus explicit model values and
+          administrative SSH source CIDRs.
 
   roles:
     - role: base

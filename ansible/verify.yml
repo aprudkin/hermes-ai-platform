@@ -3,6 +3,29 @@
   hosts: hermes
   become: true
   gather_facts: false
+  vars:
+    hermes_data_dir: /opt/hermes/data
+    hermes_runtime_owner: "10000"
+    hermes_runtime_group: "10000"
+    hermes_runtime_home: /opt/data
+    hermes_codex_home: /opt/data/.codex
+    hermes_cli_argv_prefix:
+      - docker
+      - exec
+      - --user
+      - "{{ hermes_runtime_owner }}:{{ hermes_runtime_group }}"
+      - --env
+      - "HOME={{ hermes_runtime_home }}"
+      - --env
+      - "CODEX_HOME={{ hermes_codex_home }}"
+      - hermes
+      - hermes
+    hermes_profile_source_dir: "{{ playbook_dir }}/../profiles"
+    hermes_profile_names:
+      - manager
+      - devops
+      - coding
+      - research
   tasks:
     - name: Read container health
       ansible.builtin.command:
@@ -18,14 +41,7 @@
 
     - name: Verify configured profiles through Hermes CLI
       ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - hermes
-          - hermes
-          - profile
-          - show
-          - "{{ item }}"
+        argv: "{{ hermes_cli_argv_prefix + ['profile', 'show', item] }}"
       loop:
         - manager
         - devops
@@ -33,52 +49,19 @@
         - research
       changed_when: false
 
-    - name: Read deployed profile identity checksums
-      ansible.builtin.stat:
-        path: "/opt/hermes/data/profiles/{{ item }}/SOUL.md"
-        checksum_algorithm: sha256
-      loop:
-        - manager
-        - devops
-        - coding
-        - research
-      register: runtime_profile_identities
-
-    - name: Verify deployed profile identities match repository sources
-      ansible.builtin.assert:
-        that:
-          - item.stat.exists
-          - >-
-            item.stat.checksum ==
-            (lookup('ansible.builtin.file', playbook_dir + '/../profiles/' + item.item + '/SOUL.md')
-            | hash('sha256'))
-        fail_msg: "Profile identity does not match the reviewed source: {{ item.item }}"
-      loop: "{{ runtime_profile_identities.results }}"
+    - name: Verify exact deployed profile identity bytes
+      ansible.builtin.include_tasks: tasks/verify_profile_identities.yml
 
     - name: Verify model configuration is complete
       ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - hermes
-          - hermes
-          - --profile
-          - manager
-          - config
-          - check
+        argv: "{{ hermes_cli_argv_prefix + ['--profile', 'manager', 'config', 'check'] }}"
       changed_when: false
 
     - name: Prove one profile reaches its configured model
       ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - hermes
-          - hermes
-          - --profile
-          - manager
-          - -z
-          - Reply with one short sentence confirming that the inference path is working.
+        argv: >-
+          {{ hermes_cli_argv_prefix + ['--profile', 'manager', '-z',
+          'Reply with one short sentence confirming that the inference path is working.'] }}
       register: runtime_inference_probe
       changed_when: false
       failed_when: >-

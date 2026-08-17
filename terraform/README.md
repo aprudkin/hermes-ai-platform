@@ -9,8 +9,8 @@ database, or cache because Minimal does not need them.
 `location` has no default and accepts `fsn1`, `nbg1`, or `hel1`; the selected
 Minimal target is `hel1`. `server_type` also has no default. Every plan looks up
 that type through the provider and rejects it unless Hetzner currently reports
-the type as cost-optimized, available, recommended, and not deprecated in the
-selected location. `ssh_source_cidrs` has no default: every plan must name at
+the type as cost-optimized or regular-purpose, available, recommended, and not
+deprecated in the selected location. `ssh_source_cidrs` has no default: every plan must name at
 least one administrative network. The provider reads its token from
 `HCLOUD_TOKEN`; no token belongs in a tfvars file. Use the root installer so
 input checks, planning, inventory generation, and the external mutation gate

@@ -12,6 +12,7 @@
   environment:
     HERMES_DATA_DIR: "{{ hermes_data_dir }}"
   register: hermes_restart
+  when: hermes_restart_enabled | bool
   changed_when: >-
     'Started' in hermes_restart.stderr or
     'Created' in hermes_restart.stderr or

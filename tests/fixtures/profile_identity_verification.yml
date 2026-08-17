@@ -1,0 +1,17 @@
+---
+- name: Exercise exact profile identity verification
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    hermes_data_dir: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_DATA_DIR') }}"
+    hermes_profile_source_dir: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_PROFILE_SOURCE_DIR') }}"
+    hermes_profile_names:
+      - manager
+      - devops
+      - coding
+      - research
+  tasks:
+    - name: Run production profile identity verification
+      ansible.builtin.include_tasks: ../../ansible/tasks/verify_profile_identities.yml

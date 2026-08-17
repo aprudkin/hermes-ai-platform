@@ -1,5 +1,5 @@
 location            = "hel1"
-server_type         = "cx23" # Re-check live category, availability, recommendation, and price before every real plan.
+server_type         = "cpx22" # Re-check live category, availability, recommendation, and price before every real plan.
 ssh_public_key_path = "~/.ssh/luk.pub"
 hcloud_ssh_key_name = "Luk"
 

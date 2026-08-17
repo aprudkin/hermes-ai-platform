@@ -2,6 +2,33 @@
 hermes_app_dir: /opt/hermes/app
 hermes_data_dir: /opt/hermes/data
 hermes_container_name: hermes
+hermes_app_owner: root
+hermes_app_group: root
+hermes_runtime_owner: "10000"
+hermes_runtime_group: "10000"
+hermes_runtime_home: /opt/data
+hermes_codex_home: /opt/data/.codex
+hermes_auth_store_path: "{{ hermes_data_dir }}/auth.json"
+hermes_cli_argv_prefix:
+  - docker
+  - exec
+  - --user
+  - "{{ hermes_runtime_owner }}:{{ hermes_runtime_group }}"
+  - --env
+  - "HOME={{ hermes_runtime_home }}"
+  - --env
+  - "CODEX_HOME={{ hermes_codex_home }}"
+  - "{{ hermes_container_name }}"
+  - hermes
+hermes_model_tty_command: >-
+  docker exec --interactive --tty
+  --user {{ hermes_runtime_owner }}:{{ hermes_runtime_group }}
+  --env HOME={{ hermes_runtime_home }}
+  --env CODEX_HOME={{ hermes_codex_home }}
+  {{ hermes_container_name }} hermes model
+hermes_restart_enabled: true
+hermes_env_source: ""
+hermes_codex_auth_source: ""
 hermes_profiles:
   - name: manager
     description: Coordinates outcomes, work state, and verification.

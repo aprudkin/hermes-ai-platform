@@ -39,7 +39,13 @@ fi
 
 [[ "${1:-}" == "exec" ]] || exit 90
 shift
-[[ $# -gt 0 ]]
+[[ "${1:-}" == "--user" && "${2:-}" == "10000:10000" ]] || exit 94
+shift 2
+[[ "${1:-}" == "--env" && "${2:-}" == "HOME=/opt/data" ]] || exit 95
+shift 2
+[[ "${1:-}" == "--env" && "${2:-}" == "CODEX_HOME=/opt/data/.codex" ]] || exit 96
+shift 2
+[[ "${1:-}" == "hermes" ]] || exit 97
 shift
 [[ "${1:-}" == "hermes" ]] || exit 91
 shift
@@ -147,6 +153,11 @@ count_commands() {
 if ! run_reconciliation "$fixture_root/first.out" env; then
   rg -m1 'Could not find|FAILED!' "$fixture_root/first.out" >&2 || true
   fail "initial profile reconciliation run must succeed"
+fi
+
+if grep '^exec ' "$command_log" \
+    | grep -qv '^exec --user 10000:10000 --env HOME=/opt/data --env CODEX_HOME=/opt/data/.codex hermes hermes '; then
+  fail "every Hermes CLI invocation must use the runtime identity and Codex home"
 fi
 
 [[ "$(count_commands 'hermes profile show ')" -eq 4 ]] \

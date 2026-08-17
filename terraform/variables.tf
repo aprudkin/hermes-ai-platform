@@ -20,7 +20,7 @@ variable "server_name" {
 }
 
 variable "server_type" {
-  description = "Explicit cost-optimized Hetzner Cloud server type, checked for live availability in the selected location during plan."
+  description = "Explicit shared-resource Hetzner Cloud server type, checked for live availability and recommendation in the selected location during plan."
   type        = string
 
   validation {

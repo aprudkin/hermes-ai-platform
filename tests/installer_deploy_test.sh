@@ -13,11 +13,14 @@ command_log="$fixture_root/commands.log"
 public_key="$fixture_root/luk.pub"
 private_key="$fixture_root/luk"
 provider_env="$fixture_root/hermes.env"
+codex_auth="$fixture_root/codex-auth.json"
 
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestFixtureOnly hermes-test\n' >"$public_key"
 : >"$private_key"
 printf 'OPENROUTER_API_KEY=test-only-provider-value\n' >"$provider_env"
+printf '{"tokens":{"access_token":"fixture-access","refresh_token":"fixture-refresh"}}\n' >"$codex_auth"
 chmod 600 "$provider_env"
+chmod 600 "$codex_auth"
 
 cat >"$fake_bin/terraform" <<'FAKE'
 #!/usr/bin/env bash
@@ -159,6 +162,45 @@ assert_command_counts 0 2
 grep -q 'Hermes Minimal deployment verified successfully.' "$fixture_root/existing-success.out" \
   || fail "confirmed existing-host deploy must report success after runtime verification"
 printf 'PASS confirmed existing-host deploy runs configure and verify phases in order\n'
+
+: >"$command_log"
+run_installer "$fixture_root/codex-subscription-success.out" \
+  "$repo_root/installer/install.sh" deploy existing \
+    --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-source-cidr 192.0.2.10/32 --codex-auth "$codex_auth" \
+    --model-provider openai-codex --model gpt-5.4 \
+    --confirm-external-mutation
+
+assert_log_order \
+  'ansible .*ansible/site.yml .*hermes_codex_auth_source=' \
+  'ansible .*ansible/verify.yml'
+assert_command_counts 0 2
+! grep -q 'hermes_env_source=' "$command_log" \
+  || fail "Codex subscription deployment must not pass an API-key env file"
+grep -q 'Hermes Minimal deployment verified successfully.' \
+  "$fixture_root/codex-subscription-success.out" \
+  || fail "Codex subscription deploy must report success after runtime verification"
+printf 'PASS Codex subscription deploy passes protected OAuth auth without an API-key env\n'
+
+: >"$command_log"
+set +e
+run_installer "$fixture_root/codex-subscription-missing-auth.out" \
+  "$repo_root/installer/install.sh" deploy existing \
+    --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-source-cidr 192.0.2.10/32 \
+    --model-provider openai-codex --model gpt-5.4 \
+    --confirm-external-mutation
+codex_missing_auth_rc=$?
+set -e
+
+[[ "$codex_missing_auth_rc" -ne 0 ]] \
+  || fail "Codex subscription deploy must require an explicit auth file"
+[[ ! -s "$command_log" ]] \
+  || fail "missing Codex auth must fail before Ansible"
+grep -q -- '--codex-auth is required for openai-codex' \
+  "$fixture_root/codex-subscription-missing-auth.out" \
+  || fail "missing Codex auth failure must identify --codex-auth"
+printf 'PASS Codex subscription deploy fails before external tools without auth\n'
 
 : >"$command_log"
 set +e

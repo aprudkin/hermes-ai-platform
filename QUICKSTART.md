@@ -18,19 +18,19 @@ readiness proof.
 ## 2A. Plan a new Hetzner server
 
 Use the selected Finland location `hel1`. Re-check the Hetzner catalog, choose
-an available cost-optimized type explicitly, and put `HCLOUD_TOKEN` into the
-calling process through your protected credential mechanism. The 2026-08-17
-read-only snapshot selected `cx23`; it is not a durable availability or price
-guarantee.
+an available provider-recommended cost-optimized or regular-purpose type
+explicitly, and put `HCLOUD_TOKEN` into the calling process through your
+protected credential mechanism. The 2026-08-17 selection was `cpx22`; it is
+not a durable availability or price guarantee.
 
 ```bash
-./installer/install.sh plan new --location hel1 --server-type cx23 --hcloud-ssh-key-name Luk --ssh-public-key ~/.ssh/luk.pub --ssh-source-cidr 203.0.113.10/32
+./installer/install.sh plan new --location hel1 --server-type cpx22 --hcloud-ssh-key-name Luk --ssh-public-key ~/.ssh/luk.pub --ssh-source-cidr 203.0.113.10/32
 ```
 
 `203.0.113.10/32` is a documentation-only CIDR. Substitute the real operator
 network before running a plan. Terraform rejects a type unless live provider
-metadata reports that it is cost-optimized, available, recommended, and not
-deprecated in `hel1`.
+metadata reports an allowed category (`cost_optimized` or `regular_purpose`),
+availability, recommendation, and no deprecation in `hel1`.
 
 This runs Terraform init/validate/plan and Ansible syntax validation. It does
 not apply Terraform or contact a server. The exact registered Hetzner key must
@@ -48,12 +48,19 @@ host.
 
 ## 3. Prepare Hermes credentials
 
-Copy `configs/hermes.env.example` to a file outside the repository, populate at
-least one provider key, and set mode `0600`. The installer rejects a broader
-mode. It does not print the file and Ansible uses `no_log` while transferring
-it to `/opt/hermes/data/.env`. Deployment also requires an explicit supported
-provider (`openrouter`, `anthropic`, or `openai-api`) and a model ID valid for
-that provider; the installer checks that the matching credential is populated.
+For an API-key provider, copy `configs/hermes.env.example` outside the
+repository, populate exactly the selected provider key, and set mode `0600`.
+
+For the supported ChatGPT-subscription path, first verify `codex login status`
+reports a ChatGPT login. Pass the protected mode-0400/0600
+`~/.codex/auth.json` as `--codex-auth`, select `--model-provider openai-codex`,
+and choose a Codex-supported model such as `gpt-5.4`. Do not also pass
+`--hermes-env`; this path does not use an OpenAI API key. Ansible copies the
+auth file with `no_log` to `/opt/hermes/data/.codex/auth.json`, where upstream
+Hermes imports it into its own credential store.
+
+The installer validates the selected credential shape and never prints its
+content. Subscription use remains subject to the ChatGPT plan's Codex limits.
 
 Deployment is intentionally absent from this quickstart because it creates or
 changes external systems. See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md).

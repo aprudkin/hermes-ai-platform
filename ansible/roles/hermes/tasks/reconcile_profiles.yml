@@ -1,14 +1,7 @@
 ---
 - name: Query named profiles through the Hermes CLI
   ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ hermes_container_name }}"
-      - hermes
-      - profile
-      - show
-      - "{{ item.name }}"
+    argv: "{{ hermes_cli_argv_prefix + ['profile', 'show', item.name] }}"
   loop: "{{ hermes_profiles }}"
   register: hermes_profile_queries
   changed_when: false
@@ -25,18 +18,9 @@
 
 - name: Create missing Hermes profiles from the default runtime
   ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ hermes_container_name }}"
-      - hermes
-      - profile
-      - create
-      - "{{ item.item.name }}"
-      - --clone
-      - --no-alias
-      - --description
-      - "{{ item.item.description }}"
+    argv: >-
+      {{ hermes_cli_argv_prefix + ['profile', 'create', item.item.name,
+      '--clone', '--no-alias', '--description', item.item.description] }}
   loop: "{{ hermes_profile_queries.results }}"
   when: item.rc == 1
   changed_when: true
@@ -45,16 +29,8 @@
 
 - name: Read desired configuration for every Hermes profile
   ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ hermes_container_name }}"
-      - hermes
-      - --profile
-      - "{{ item.0 }}"
-      - config
-      - get
-      - "{{ item.1.key }}"
+    argv: >-
+      {{ hermes_cli_argv_prefix + ['--profile', item.0, 'config', 'get', item.1.key] }}
   loop: "{{ hermes_profile_names | product(hermes_desired_profile_config) | list }}"
   register: hermes_profile_config_queries
   changed_when: false
@@ -71,17 +47,9 @@
 
 - name: Reconcile changed Hermes profile configuration
   ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - "{{ hermes_container_name }}"
-      - hermes
-      - --profile
-      - "{{ item.item.0 }}"
-      - config
-      - set
-      - "{{ item.item.1.key }}"
-      - "{{ item.item.1.value }}"
+    argv: >-
+      {{ hermes_cli_argv_prefix + ['--profile', item.item.0, 'config', 'set',
+      item.item.1.key, item.item.1.value] }}
   loop: "{{ hermes_profile_config_queries.results }}"
   when: >-
     item.rc == 1 or

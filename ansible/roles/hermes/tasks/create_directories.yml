@@ -1,0 +1,16 @@
+---
+- name: Create root-owned Hermes application directory
+  ansible.builtin.file:
+    path: "{{ hermes_app_dir }}"
+    state: directory
+    owner: "{{ hermes_app_owner }}"
+    group: "{{ hermes_app_group }}"
+    mode: "0750"
+
+- name: Create runtime-owned Hermes data directory
+  ansible.builtin.file:
+    path: "{{ hermes_data_dir }}"
+    state: directory
+    owner: "{{ hermes_runtime_owner }}"
+    group: "{{ hermes_runtime_group }}"
+    mode: "0750"

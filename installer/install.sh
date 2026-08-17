@@ -14,9 +14,9 @@ Usage:
   ./installer/install.sh plan new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH --ssh-source-cidr CIDR
   ./installer/install.sh plan existing --host HOST --ssh-user USER --ssh-private-key PATH --ssh-source-cidr CIDR
   ./installer/install.sh deploy new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH \
-    --ssh-private-key PATH --ssh-source-cidr CIDR --hermes-env PATH --model-provider PROVIDER --model MODEL --confirm-external-mutation
+    --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
   ./installer/install.sh deploy existing --host HOST --ssh-user USER \
-    --ssh-private-key PATH --ssh-source-cidr CIDR --hermes-env PATH --model-provider PROVIDER --model MODEL --confirm-external-mutation
+    --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
 
 The plan commands perform local validation. The new-server plan also runs
 terraform plan and requires HCLOUD_TOKEN in the environment. Deploy commands
@@ -116,6 +116,31 @@ validate_hermes_env() {
     || die "--hermes-env does not contain the key required by --model-provider"
 }
 
+validate_codex_auth() {
+  local source_file="$1"
+  local mode
+  validate_key_path "$source_file"
+  mode="$(file_mode "$source_file")"
+  case "$mode" in
+    400 | 600) ;;
+    *) die "--codex-auth must have mode 0400 or 0600 (found $mode)" ;;
+  esac
+  python3 - "$source_file" <<'PY' >/dev/null 2>&1 || die "--codex-auth is not a usable Codex CLI auth file"
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+tokens = payload.get("tokens")
+if not isinstance(tokens, dict):
+    raise SystemExit(1)
+if not str(tokens.get("access_token") or "").strip():
+    raise SystemExit(1)
+if not str(tokens.get("refresh_token") or "").strip():
+    raise SystemExit(1)
+PY
+}
+
 write_inventory() {
   local host="$1"
   local ssh_user="$2"
@@ -164,13 +189,20 @@ ansible_syntax_plan() {
 run_ansible() {
   local inventory_path="$1"
   local env_file="$2"
-  local model_provider="$3"
-  local model="$4"
-  local ssh_cidrs_json="$5"
+  local codex_auth_file="$3"
+  local model_provider="$4"
+  local model="$5"
+  local ssh_cidrs_json="$6"
+  local credential_vars=()
   need_command ansible-playbook
+  if [[ "$model_provider" == "openai-codex" ]]; then
+    credential_vars+=(--extra-vars "hermes_codex_auth_source=$codex_auth_file")
+  else
+    credential_vars+=(--extra-vars "hermes_env_source=$env_file")
+  fi
   ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
     ansible-playbook --inventory "$inventory_path" "$playbook" \
-      --extra-vars "hermes_env_source=$env_file" \
+      "${credential_vars[@]}" \
       --extra-vars "hermes_model_provider=$model_provider" \
       --extra-vars "hermes_model=$model" \
       --extra-vars "{\"hermes_ssh_source_cidrs\":$ssh_cidrs_json}"
@@ -244,7 +276,7 @@ deploy_runtime() {
     last_completed_phase="inventory"
   fi
   run_phase configure \
-    run_ansible "$inventory_path" "$hermes_env" "$model_provider" "$model" "$ssh_cidrs_json"
+    run_ansible "$inventory_path" "$hermes_env" "$codex_auth" "$model_provider" "$model" "$ssh_cidrs_json"
   run_phase verify \
     "$repo_root/scripts/validate.sh" --runtime --inventory "$inventory_path"
   printf 'Hermes Minimal deployment verified successfully.\n'
@@ -278,13 +310,20 @@ prepare_existing_request() {
 validate_deploy_request() {
   [[ "$confirmed" == "true" ]] || die "deploy requires --confirm-external-mutation"
   [[ -n "$private_key" ]] || die "--ssh-private-key is required"
-  [[ -n "$hermes_env" ]] || die "--hermes-env is required"
   [[ -n "$model_provider" ]] || die "--model-provider is required"
   [[ -n "$model" ]] || die "--model is required"
   if [[ "$target" == "new" ]]; then
     validate_key_path "$private_key"
   fi
-  validate_hermes_env "$hermes_env" "$model_provider"
+  if [[ "$model_provider" == "openai-codex" ]]; then
+    [[ -n "$codex_auth" ]] || die "--codex-auth is required for openai-codex"
+    [[ -z "$hermes_env" ]] || die "--hermes-env must not be used with openai-codex"
+    validate_codex_auth "$codex_auth"
+  else
+    [[ -n "$hermes_env" ]] || die "--hermes-env is required"
+    [[ -z "$codex_auth" ]] || die "--codex-auth is supported only with openai-codex"
+    validate_hermes_env "$hermes_env" "$model_provider"
+  fi
 }
 
 dispatch_plan() {
@@ -335,6 +374,7 @@ private_key=""
 host=""
 ssh_user=""
 hermes_env=""
+codex_auth=""
 model_provider=""
 model=""
 ssh_source_cidrs=()
@@ -342,7 +382,7 @@ confirmed="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --location | --server-type | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --model-provider | --model)
+    --location | --server-type | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --codex-auth | --model-provider | --model)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       option="$1"
       value="$2"
@@ -356,6 +396,7 @@ while [[ $# -gt 0 ]]; do
         --host) host="$value" ;;
         --ssh-user) ssh_user="$value" ;;
         --hermes-env) hermes_env="$value" ;;
+        --codex-auth) codex_auth="$value" ;;
         --model-provider) model_provider="$value" ;;
         --model) model="$value" ;;
       esac

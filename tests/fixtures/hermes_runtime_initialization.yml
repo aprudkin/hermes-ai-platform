@@ -1,0 +1,20 @@
+---
+- name: Exercise Hermes runtime initialization before health checks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  environment:
+    PATH: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_BIN') }}:{{ lookup('ansible.builtin.env', 'PATH') }}"
+  vars:
+    hermes_restart_enabled: false
+  tasks:
+    - name: Initialize an outdated runtime configuration
+      ansible.builtin.include_role:
+        name: hermes
+        tasks_from: initialize_runtime
+
+    - name: Prove a current runtime configuration is not initialized again
+      ansible.builtin.include_role:
+        name: hermes
+        tasks_from: initialize_runtime

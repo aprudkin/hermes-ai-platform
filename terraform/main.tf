@@ -62,8 +62,11 @@ resource "hcloud_server" "hermes" {
     }
 
     precondition {
-      condition     = data.hcloud_server_type.selected.category == "cost_optimized"
-      error_message = "The selected server_type must be in Hetzner's cost_optimized category."
+      condition = contains(
+        ["cost_optimized", "regular_purpose"],
+        data.hcloud_server_type.selected.category
+      )
+      error_message = "The selected server_type must use Hetzner shared resources (cost_optimized or regular_purpose)."
     }
 
     precondition {

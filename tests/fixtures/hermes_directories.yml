@@ -1,0 +1,18 @@
+---
+- name: Exercise Hermes directory ownership
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    hermes_app_dir: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_APP_DIR') }}"
+    hermes_data_dir: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_DATA_DIR') }}"
+    hermes_app_owner: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_OWNER') }}"
+    hermes_app_group: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_GROUP') }}"
+    hermes_runtime_owner: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_OWNER') }}"
+    hermes_runtime_group: "{{ lookup('ansible.builtin.env', 'HERMES_TEST_GROUP') }}"
+  tasks:
+    - name: Run the production directory creation task
+      ansible.builtin.include_role:
+        name: hermes
+        tasks_from: create_directories

@@ -1,0 +1,25 @@
+---
+- name: Inspect Hermes runtime configuration version
+  ansible.builtin.command:
+    argv: "{{ hermes_cli_argv_prefix + ['config', 'check'] }}"
+  register: hermes_runtime_config_status
+  changed_when: false
+
+- name: Refuse to reset a non-empty outdated Hermes configuration
+  ansible.builtin.assert:
+    that:
+      - "'Config version: 0 ' in hermes_runtime_config_status.stdout"
+    fail_msg: >-
+      Hermes configuration is outdated but non-empty. Migrate it explicitly;
+      automatic reset is allowed only for a new version-0 deployment.
+  when: "'update available' in hermes_runtime_config_status.stdout"
+
+- name: Initialize a new version-0 Hermes runtime configuration
+  ansible.builtin.command:
+    argv: "{{ hermes_cli_argv_prefix + ['setup', '--non-interactive', '--reset'] }}"
+  when: "'update available' in hermes_runtime_config_status.stdout"
+  changed_when: true
+  notify: Restart Hermes
+
+- name: Apply pending runtime initialization before health checks
+  ansible.builtin.meta: flush_handlers

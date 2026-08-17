@@ -1,0 +1,21 @@
+---
+- name: Read deployed profile identity checksums
+  ansible.builtin.stat:
+    path: "{{ hermes_data_dir }}/profiles/{{ item }}/SOUL.md"
+    checksum_algorithm: sha256
+  loop: "{{ hermes_profile_names }}"
+  register: runtime_profile_identities
+
+- name: Verify deployed profile identities match repository bytes
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - >-
+        item.stat.checksum ==
+        (lookup(
+          'ansible.builtin.file',
+          hermes_profile_source_dir + '/' + item.item + '/SOUL.md',
+          rstrip=false
+        ) | hash('sha256'))
+    fail_msg: "Profile identity does not match the reviewed source: {{ item.item }}"
+  loop: "{{ runtime_profile_identities.results }}"
