@@ -12,11 +12,11 @@ usage() {
 Usage:
   ./installer/install.sh validate
   ./installer/install.sh plan new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH --ssh-source-cidr CIDR
-  ./installer/install.sh plan existing --host HOST --ssh-user USER --ssh-private-key PATH --ssh-source-cidr CIDR
+  ./installer/install.sh plan existing --host HOST --ssh-user USER --ssh-public-key PATH --ssh-private-key PATH --ssh-source-cidr CIDR
   ./installer/install.sh deploy new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH \
     --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
   ./installer/install.sh deploy existing --host HOST --ssh-user USER \
-    --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
+    --ssh-public-key PATH --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
 
 The plan commands perform local validation. The new-server plan also runs
 terraform plan and requires HCLOUD_TOKEN in the environment. Deploy commands
@@ -68,8 +68,30 @@ validate_key_path() {
 validate_public_key() {
   local key_path="$1"
   validate_key_path "$key_path"
-  grep -Eq '^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521))[[:space:]]+[A-Za-z0-9+/=]+' "$key_path" \
-    || die "--ssh-public-key is not a recognized OpenSSH public key"
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      records++
+      if ($1 ~ /^(ssh-(rsa|ed25519)|ecdsa-sha2-nistp(256|384|521))$/ &&
+          $2 ~ /^[A-Za-z0-9+\/=]+$/) {
+        supported++
+      }
+    }
+    END { exit !(records == 1 && supported == 1) }
+  ' "$key_path" \
+    || die "--ssh-public-key must contain exactly one supported OpenSSH public key"
+}
+
+validate_key_pair() {
+  local public_key_path="$1"
+  local private_key_path="$2"
+  local public_identity
+  local private_identity
+  need_command ssh-keygen
+  public_identity="$(ssh-keygen -lf "$public_key_path" 2>/dev/null | awk 'NR == 1 { print $2 }')"
+  private_identity="$(ssh-keygen -lf "$private_key_path" 2>/dev/null | awk 'NR == 1 { print $2 }')"
+  [[ -n "$public_identity" && "$public_identity" == "$private_identity" ]] \
+    || die "SSH public and private keys do not match"
 }
 
 validate_cidr() {
@@ -179,9 +201,11 @@ terraform_plan() {
 
 ansible_syntax_plan() {
   local inventory_path="$1"
+  local root_public_key="$2"
   need_command ansible-playbook
   ansible-playbook --syntax-check --inventory "$inventory_path" "$playbook" \
     --extra-vars "hermes_env_source=$repo_root/configs/hermes.env.example" \
+    --extra-vars "hermes_root_ssh_public_key_source=$root_public_key" \
     --extra-vars '{"hermes_ssh_source_cidrs":["192.0.2.10/32"]}'
   printf 'Ansible syntax plan completed; no host connection was attempted.\n'
 }
@@ -193,6 +217,7 @@ run_ansible() {
   local model_provider="$4"
   local model="$5"
   local ssh_cidrs_json="$6"
+  local root_public_key="$7"
   local credential_vars=()
   need_command ansible-playbook
   if [[ "$model_provider" == "openai-codex" ]]; then
@@ -205,6 +230,7 @@ run_ansible() {
       "${credential_vars[@]}" \
       --extra-vars "hermes_model_provider=$model_provider" \
       --extra-vars "hermes_model=$model" \
+      --extra-vars "hermes_root_ssh_public_key_source=$root_public_key" \
       --extra-vars "{\"hermes_ssh_source_cidrs\":$ssh_cidrs_json}"
 }
 
@@ -276,7 +302,7 @@ deploy_runtime() {
     last_completed_phase="inventory"
   fi
   run_phase configure \
-    run_ansible "$inventory_path" "$hermes_env" "$codex_auth" "$model_provider" "$model" "$ssh_cidrs_json"
+    run_ansible "$inventory_path" "$hermes_env" "$codex_auth" "$model_provider" "$model" "$ssh_cidrs_json" "$public_key"
   run_phase verify \
     "$repo_root/scripts/validate.sh" --runtime --inventory "$inventory_path"
   printf 'Hermes Minimal deployment verified successfully.\n'
@@ -301,8 +327,10 @@ prepare_new_request() {
 prepare_existing_request() {
   validate_host "$host"
   [[ -n "$ssh_user" ]] || die "--ssh-user is required"
+  [[ -n "$public_key" ]] || die "--ssh-public-key is required"
   [[ -n "$private_key" ]] || die "--ssh-private-key is required"
   validate_user "$ssh_user"
+  validate_public_key "$public_key"
   validate_key_path "$private_key"
   inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
 }
@@ -315,6 +343,7 @@ validate_deploy_request() {
   if [[ "$target" == "new" ]]; then
     validate_key_path "$private_key"
   fi
+  validate_key_pair "$public_key" "$private_key"
   if [[ "$model_provider" == "openai-codex" ]]; then
     [[ -n "$codex_auth" ]] || die "--codex-auth is required for openai-codex"
     [[ -z "$hermes_env" ]] || die "--hermes-env must not be used with openai-codex"
@@ -330,10 +359,10 @@ dispatch_plan() {
   case "$target" in
     new)
       terraform_plan "$location" "$server_type" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
-      ansible_syntax_plan "$repo_root/ansible/inventory.example.ini"
+      ansible_syntax_plan "$repo_root/ansible/inventory.example.ini" "$public_key"
       ;;
     existing)
-      ansible_syntax_plan "$inventory_path"
+      ansible_syntax_plan "$inventory_path" "$public_key"
       ;;
   esac
 }

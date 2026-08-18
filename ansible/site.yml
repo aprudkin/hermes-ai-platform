@@ -26,6 +26,7 @@
           - hermes_model_provider | default("") | length > 0
           - hermes_model | default("") | length > 0
           - hermes_ssh_source_cidrs | default([]) | length > 0
+          - hermes_root_ssh_public_key_source | default("") | length > 0
         fail_msg: >-
           Minimal supports Ubuntu 24.04+ and requires either a populated
           controller-local Hermes .env for API-key providers or a protected
