@@ -1,0 +1,28 @@
+---
+- name: Apply only Hermes root credential hardening
+  hosts: hermes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Validate SSH before root credential mutation
+      ansible.builtin.command: sshd -t
+      changed_when: false
+
+    - name: Apply the production root credential controls
+      ansible.builtin.include_role:
+        name: base
+        tasks_from: root_credentials
+
+    - name: Validate SSH after root credential mutation
+      ansible.builtin.command: sshd -t
+      changed_when: false
+
+    - name: Read the root password status
+      ansible.builtin.command: passwd -S root
+      register: root_password_status
+      changed_when: false
+      failed_when: >-
+        root_password_status.rc != 0 or
+        root_password_status.stdout.split() | length < 2 or
+        root_password_status.stdout.split()[1] != 'L'
+      no_log: true

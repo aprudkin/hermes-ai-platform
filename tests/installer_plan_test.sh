@@ -25,8 +25,13 @@ FAKE
 chmod +x "$fake_bin/terraform" "$fake_bin/ansible-playbook"
 
 public_key="$fixture_root/luk.pub"
+multiple_public_keys="$fixture_root/multiple.pub"
 private_key="$fixture_root/luk"
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestFixtureOnly hermes-test\n' >"$public_key"
+printf '%s\n%s\n' \
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestFixtureOnly first' \
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAnotherFixtureOnly second' \
+  >"$multiple_public_keys"
 : >"$private_key"
 
 env PATH="$fake_bin:$PATH" TERRAFORM_LOG="$terraform_log" \
@@ -64,16 +69,61 @@ printf 'PASS new-host plan requires an explicit server type before external tool
 
 : >"$terraform_log"
 : >"$ansible_log"
+set +e
+env PATH="$fake_bin:$PATH" TERRAFORM_LOG="$terraform_log" \
+  ANSIBLE_LOG="$ansible_log" HCLOUD_TOKEN="test-only-token" \
+  "$repo_root/installer/install.sh" plan new --location hel1 --server-type cx23 \
+    --hcloud-ssh-key-name Luk --ssh-public-key "$multiple_public_keys" \
+    --ssh-source-cidr 192.0.2.10/32 >"$fixture_root/multiple-public-keys.out" 2>&1
+multiple_public_keys_status=$?
+set -e
+
+[[ "$multiple_public_keys_status" -ne 0 ]] \
+  || fail "new-host plan must reject multiple root public-key records"
+[[ ! -s "$terraform_log" ]] \
+  || fail "multiple public-key records must fail before Terraform"
+[[ ! -s "$ansible_log" ]] \
+  || fail "multiple public-key records must fail before Ansible"
+grep -q -- '--ssh-public-key must contain exactly one supported OpenSSH public key' \
+  "$fixture_root/multiple-public-keys.out" \
+  || fail "multiple public-key failure must identify the one-key contract"
+printf 'PASS new-host plan rejects multiple public-key records before external tools\n'
+
+: >"$terraform_log"
+: >"$ansible_log"
 PATH="$fake_bin:$PATH" \
 TERRAFORM_LOG="$terraform_log" \
 ANSIBLE_LOG="$ansible_log" \
   "$repo_root/installer/install.sh" plan existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 >/dev/null
 
 [[ ! -s "$terraform_log" ]] || fail "existing-host plan must not invoke Terraform"
 grep -q -- '--syntax-check' "$ansible_log" || fail "existing-host plan must syntax-check Ansible"
+grep -q -- "hermes_root_ssh_public_key_source=$public_key" "$ansible_log" \
+  || fail "existing-host plan must pass the validated root public-key source to Ansible"
 printf 'PASS existing-host plan bypasses Terraform and stays local\n'
+
+: >"$terraform_log"
+: >"$ansible_log"
+set +e
+PATH="$fake_bin:$PATH" \
+TERRAFORM_LOG="$terraform_log" \
+ANSIBLE_LOG="$ansible_log" \
+  "$repo_root/installer/install.sh" plan existing \
+    --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-source-cidr 192.0.2.10/32 >"$fixture_root/missing-public-key.out" 2>&1
+missing_public_key_status=$?
+set -e
+
+[[ "$missing_public_key_status" -ne 0 ]] \
+  || fail "existing-host plan must require the root public-key source"
+[[ ! -s "$terraform_log" ]] || fail "missing public key must fail before Terraform"
+[[ ! -s "$ansible_log" ]] || fail "missing public key must fail before Ansible"
+grep -q -- '--ssh-public-key is required' "$fixture_root/missing-public-key.out" \
+  || fail "missing public-key failure must identify --ssh-public-key"
+printf 'PASS existing-host plan requires a root public-key source before external tools\n'
 
 provider_env="$fixture_root/hermes.env"
 printf 'OPENROUTER_API_KEY=test-only-provider-value\n' >"$provider_env"
@@ -105,6 +155,7 @@ TERRAFORM_LOG="$terraform_log" \
 ANSIBLE_LOG="$ansible_log" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 --hermes-env "$provider_env" \
     --model-provider openrouter --model test/model \
     >"$fixture_root/existing-deploy.out" 2>&1

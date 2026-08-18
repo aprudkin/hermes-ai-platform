@@ -26,6 +26,16 @@
       MaxAuthTries 4
   notify: Validate and restart ssh
 
+- name: Flush validated SSH configuration before root credential changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Validate SSH before enforcing root credentials
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+- name: Enforce the root credential lifecycle
+  ansible.builtin.import_tasks: root_credentials.yml
+
 - name: Create Hermes host-state directory
   ansible.builtin.file:
     path: /etc/hermes

@@ -108,7 +108,8 @@ validate_ansible() {
     ansible-playbook --syntax-check \
       --inventory "$repo_root/ansible/inventory.example.ini" \
       "$repo_root/ansible/site.yml" \
-      --extra-vars "hermes_env_source=$repo_root/configs/hermes.env.example"
+      --extra-vars "hermes_env_source=$repo_root/configs/hermes.env.example" \
+      --extra-vars "hermes_root_ssh_public_key_source=/dev/null"
   printf 'PASS Ansible syntax\n'
 
   if need_command ansible-lint "ansible-lint"; then

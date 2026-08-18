@@ -72,7 +72,17 @@ case "${1:-}" in
 esac
 FAKE
 
-chmod +x "$fake_bin/terraform" "$fake_bin/ansible-playbook" "$fake_bin/stat"
+cat >"$fake_bin/ssh-keygen" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "${MISMATCH_KEYPAIR:-0}" == "1" && "${*: -1}" == *.pub ]]; then
+  printf '256 SHA256:public-fixture fixture (ED25519)\n'
+else
+  printf '256 SHA256:matching-fixture fixture (ED25519)\n'
+fi
+FAKE
+
+chmod +x "$fake_bin/terraform" "$fake_bin/ansible-playbook" "$fake_bin/stat" \
+  "$fake_bin/ssh-keygen"
 
 run_installer() {
   local output_path="$1"
@@ -127,6 +137,26 @@ assert_failure_report() {
 }
 
 : >"$command_log"
+set +e
+MISMATCH_KEYPAIR=1 run_installer "$fixture_root/keypair-mismatch.out" \
+  "$repo_root/installer/install.sh" deploy existing \
+    --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
+    --ssh-source-cidr 192.0.2.10/32 --hermes-env "$provider_env" \
+    --model-provider openrouter --model test/model \
+    --confirm-external-mutation
+keypair_mismatch_status=$?
+set -e
+
+[[ "$keypair_mismatch_status" -ne 0 ]] \
+  || fail "deploy must reject a public/private SSH key mismatch"
+[[ ! -s "$command_log" ]] \
+  || fail "a keypair mismatch must fail before Terraform or Ansible"
+grep -q 'SSH public and private keys do not match' "$fixture_root/keypair-mismatch.out" \
+  || fail "keypair mismatch failure must identify the violated contract"
+printf 'PASS deploy rejects a mismatched SSH keypair before external tools\n'
+
+: >"$command_log"
 run_installer "$fixture_root/new-success.out" \
   "$repo_root/installer/install.sh" deploy new --location hel1 --server-type cx23 \
     --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
@@ -151,6 +181,7 @@ printf 'PASS confirmed new-host deploy runs every phase in order\n'
 run_installer "$fixture_root/existing-success.out" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 --hermes-env "$provider_env" \
     --model-provider openrouter --model test/model \
     --confirm-external-mutation
@@ -159,6 +190,8 @@ assert_log_order \
   'ansible .*ansible/site.yml ' \
   'ansible .*ansible/verify.yml'
 assert_command_counts 0 2
+grep -q -- "hermes_root_ssh_public_key_source=$public_key" "$command_log" \
+  || fail "existing-host deploy must pass the validated root public-key source to Ansible"
 grep -q 'Hermes Minimal deployment verified successfully.' "$fixture_root/existing-success.out" \
   || fail "confirmed existing-host deploy must report success after runtime verification"
 printf 'PASS confirmed existing-host deploy runs configure and verify phases in order\n'
@@ -167,6 +200,7 @@ printf 'PASS confirmed existing-host deploy runs configure and verify phases in 
 run_installer "$fixture_root/codex-subscription-success.out" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 --codex-auth "$codex_auth" \
     --model-provider openai-codex --model gpt-5.4 \
     --confirm-external-mutation
@@ -187,6 +221,7 @@ set +e
 run_installer "$fixture_root/codex-subscription-missing-auth.out" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 \
     --model-provider openai-codex --model gpt-5.4 \
     --confirm-external-mutation
@@ -226,6 +261,7 @@ set +e
 FAIL_ANSIBLE=1 run_installer "$fixture_root/ansible-failure.out" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 --hermes-env "$provider_env" \
     --model-provider openrouter --model test/model \
     --confirm-external-mutation
@@ -247,6 +283,7 @@ set +e
 FAIL_RUNTIME=1 run_installer "$fixture_root/runtime-failure.out" \
   "$repo_root/installer/install.sh" deploy existing \
     --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" \
     --ssh-source-cidr 192.0.2.10/32 --hermes-env "$provider_env" \
     --model-provider openrouter --model test/model \
     --confirm-external-mutation

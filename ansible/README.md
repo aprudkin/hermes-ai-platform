@@ -15,4 +15,11 @@ copies it with `no_log` to the runtime user's `.codex/auth.json` for upstream
 Hermes to import. The private SSH key and original credential remain on the
 controller.
 Use the root installer to generate a local ignored inventory and enforce the
-external-mutation confirmation gate.
+external-mutation confirmation gate. Both new-host and existing-host flows
+require the intended root public-key file. The base role normalizes that file
+to one `restrict` authorization record, preserves the original authorization
+once as `.ssh/authorized_keys.pre-hermes-hardening`, and locks the root
+password. The targeted `root_hardening.yml` playbook validates sshd before and
+after applying only those credential controls, without running package,
+firewall, Docker, or runtime tasks. The preserved file is the exact
+authorization rollback source and is never overwritten by later role runs.
