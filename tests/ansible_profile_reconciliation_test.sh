@@ -166,10 +166,14 @@ fi
   || fail "reconciliation must create only the missing profile"
 grep -q 'hermes profile create devops ' "$command_log" \
   || fail "reconciliation must create the missing devops profile"
-[[ "$(count_commands ' config get ')" -eq 15 ]] \
+[[ "$(count_commands ' config get ')" -eq 20 ]] \
   || fail "reconciliation must read the desired matrix for all profiles"
-[[ "$(count_commands ' config set ')" -eq 5 ]] \
+[[ "$(count_commands ' config set ')" -eq 10 ]] \
   || fail "reconciliation must write only missing or changed values"
+for profile in default manager devops coding research; do
+  [[ "$(<"$state_dir/config/$profile/stt.language")" == "ru" ]] \
+    || fail "reconciliation must set Russian STT for $profile"
+done
 printf 'PASS profile reconciliation uses canonical state and one desired matrix\n'
 
 : >"$command_log"
@@ -180,7 +184,7 @@ fi
 
 [[ "$(count_commands 'hermes profile create ')" -eq 0 ]] \
   || fail "second reconciliation must not recreate profiles"
-[[ "$(count_commands ' config get ')" -eq 15 ]] \
+[[ "$(count_commands ' config get ')" -eq 20 ]] \
   || fail "second reconciliation must still verify every desired value"
 [[ "$(count_commands ' config set ')" -eq 0 ]] \
   || fail "second reconciliation must be idempotent"

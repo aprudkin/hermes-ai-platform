@@ -18,6 +18,13 @@ uses exit 1 with `Config key not set` for a missing key. The role tolerates
 only those two documented absence results; every other non-zero query result
 fails before create or set operations.
 
+The desired profile matrix also sets `stt.language=ru` for the default profile
+and every named profile. In pinned Hermes `v2026.8.16`, the global
+[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/website/docs/user-guide/configuration.md#speech-to-text-stt)
+value is the language hint for every STT provider unless a provider-specific
+language overrides it; an empty value restores provider auto-detection. This
+setting does not select an STT provider and is separate from the UI language.
+
 Not implemented in Minimal: automated backup/restore, monitoring/alerting,
 image upgrade automation, DNS, TLS, public dashboard/API access, or disaster
 recovery. These remain later-level work and must not be inferred from this
