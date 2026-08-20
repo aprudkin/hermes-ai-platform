@@ -163,7 +163,12 @@ if [[ "${1:-}" != "--version" ]]; then
   printf 'profile=%s args=%s\n' "${HERMES_GATEWAY_PROFILE-}" "$*" >>"$HERMES_FAKE_COMPOSE_LOG"
 fi
 FAKE
-chmod +x "$strict_bin"/*
+chmod +x \
+  "$strict_bin/shellcheck" \
+  "$strict_bin/terraform" \
+  "$strict_bin/ansible-playbook" \
+  "$strict_bin/ansible-lint" \
+  "$strict_bin/docker"
 
 strict_path="$strict_bin:/usr/bin:/bin"
 set +e
