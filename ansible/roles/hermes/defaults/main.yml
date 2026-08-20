@@ -44,5 +44,7 @@ hermes_desired_profile_config:
     value: "{{ hermes_model_provider }}"
   - key: model.default
     value: "{{ hermes_model }}"
+  - key: stt.language
+    value: ru
   - key: tool_loop_guardrails.hard_stop_enabled
     value: "true"
