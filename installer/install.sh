@@ -6,6 +6,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 generated_dir="$repo_root/.generated"
 terraform_dir="$repo_root/terraform"
 playbook="$repo_root/ansible/site.yml"
+telegram_playbook="$repo_root/ansible/telegram_gateway.yml"
+telegram_verify_playbook="$repo_root/ansible/telegram_verify.yml"
 
 usage() {
   cat <<'USAGE'
@@ -13,6 +15,7 @@ Usage:
   ./installer/install.sh validate
   ./installer/install.sh plan new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH --ssh-source-cidr CIDR
   ./installer/install.sh plan existing --host HOST --ssh-user USER --ssh-public-key PATH --ssh-private-key PATH --ssh-source-cidr CIDR
+  ./installer/install.sh plan telegram --telegram-state enabled|disabled --host HOST --ssh-user USER --ssh-public-key PATH --ssh-private-key PATH [--telegram-env PATH --gateway-profile NAME]
   ./installer/install.sh deploy new --location fsn1|nbg1|hel1 --server-type TYPE --hcloud-ssh-key-name NAME --ssh-public-key PATH \
     --ssh-private-key PATH --ssh-source-cidr CIDR (--hermes-env PATH|--codex-auth PATH) --model-provider PROVIDER --model MODEL --confirm-external-mutation
   ./installer/install.sh deploy existing --host HOST --ssh-user USER \
@@ -92,6 +95,41 @@ validate_key_pair() {
   private_identity="$(ssh-keygen -lf "$private_key_path" 2>/dev/null | awk 'NR == 1 { print $2 }')"
   [[ -n "$public_identity" && "$public_identity" == "$private_identity" ]] \
     || die "SSH public and private keys do not match"
+}
+
+validate_gateway_profile() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] \
+    || die "--gateway-profile must be a Hermes profile name"
+}
+
+validate_telegram_input() {
+  local source_file="$1"
+  need_file "$source_file"
+  HERMES_REPO_ROOT="$repo_root" python3 "$repo_root/scripts/telegram_env.py" check "$source_file" \
+    || die "--telegram-env failed the protected Telegram input contract"
+}
+
+validate_telegram_option_contract() {
+  case "$telegram_state" in
+    enabled)
+      [[ -n "$telegram_env" ]] || die "--telegram-env is required when Telegram is enabled"
+      [[ -n "$gateway_profile" ]] || die "--gateway-profile is required when Telegram is enabled"
+      validate_gateway_profile "$gateway_profile"
+      validate_telegram_input "$telegram_env"
+      ;;
+    disabled)
+      [[ "$telegram_env_supplied" != "true" ]] \
+        || die "--telegram-env must not be used when Telegram is disabled"
+      [[ "$gateway_profile_supplied" != "true" ]] \
+        || die "--gateway-profile must not be used when Telegram is disabled"
+      ;;
+    "")
+      if [[ "$telegram_env_supplied" == "true" || "$gateway_profile_supplied" == "true" ]]; then
+        die "--telegram-env and --gateway-profile must be supplied together"
+      fi
+      ;;
+    *) die "--telegram-state must be enabled or disabled" ;;
+  esac
 }
 
 validate_cidr() {
@@ -202,12 +240,42 @@ terraform_plan() {
 ansible_syntax_plan() {
   local inventory_path="$1"
   local root_public_key="$2"
+  local requested_telegram_state="${3:-}"
+  local requested_telegram_env="${4:-}"
+  local requested_gateway_profile="${5:-}"
+  local telegram_vars=()
   need_command ansible-playbook
+  if [[ "$requested_telegram_state" == "enabled" ]]; then
+    telegram_vars=(
+      --extra-vars "hermes_telegram_state=$requested_telegram_state"
+      --extra-vars "hermes_telegram_env_source=$requested_telegram_env"
+      --extra-vars "hermes_gateway_profile=$requested_gateway_profile"
+    )
+  fi
   ansible-playbook --syntax-check --inventory "$inventory_path" "$playbook" \
     --extra-vars "hermes_env_source=$repo_root/configs/hermes.env.example" \
     --extra-vars "hermes_root_ssh_public_key_source=$root_public_key" \
-    --extra-vars '{"hermes_ssh_source_cidrs":["192.0.2.10/32"]}'
+    --extra-vars '{"hermes_ssh_source_cidrs":["192.0.2.10/32"]}' \
+    "${telegram_vars[@]}"
   printf 'Ansible syntax plan completed; no host connection was attempted.\n'
+}
+
+telegram_syntax_plan() {
+  need_command ansible-playbook
+  local telegram_vars=(
+    --extra-vars "hermes_telegram_state=$telegram_state"
+    --extra-vars "hermes_telegram_env_source=$telegram_env"
+    --extra-vars "hermes_gateway_profile=$gateway_profile"
+  )
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --syntax-check --inventory "$inventory_path" \
+      "$telegram_playbook" "${telegram_vars[@]}"
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --syntax-check --inventory "$inventory_path" \
+      "$telegram_verify_playbook" \
+      --extra-vars "hermes_telegram_state=$telegram_state" \
+      --extra-vars "hermes_gateway_profile=$gateway_profile"
+  printf 'Telegram Ansible syntax plan completed; no host connection was attempted.\n'
 }
 
 run_ansible() {
@@ -219,11 +287,19 @@ run_ansible() {
   local ssh_cidrs_json="$6"
   local root_public_key="$7"
   local credential_vars=()
+  local telegram_vars=()
   need_command ansible-playbook
   if [[ "$model_provider" == "openai-codex" ]]; then
     credential_vars+=(--extra-vars "hermes_codex_auth_source=$codex_auth_file")
   else
     credential_vars+=(--extra-vars "hermes_env_source=$env_file")
+  fi
+  if [[ "$telegram_state" == "enabled" ]]; then
+    telegram_vars=(
+      --extra-vars "hermes_telegram_state=$telegram_state"
+      --extra-vars "hermes_telegram_env_source=$telegram_env"
+      --extra-vars "hermes_gateway_profile=$gateway_profile"
+    )
   fi
   ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
     ansible-playbook --inventory "$inventory_path" "$playbook" \
@@ -231,7 +307,27 @@ run_ansible() {
       --extra-vars "hermes_model_provider=$model_provider" \
       --extra-vars "hermes_model=$model" \
       --extra-vars "hermes_root_ssh_public_key_source=$root_public_key" \
-      --extra-vars "{\"hermes_ssh_source_cidrs\":$ssh_cidrs_json}"
+      --extra-vars "{\"hermes_ssh_source_cidrs\":$ssh_cidrs_json}" \
+      "${telegram_vars[@]}"
+}
+
+run_telegram_ansible() {
+  local requested_inventory_path="$1"
+
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --inventory "$requested_inventory_path" "$telegram_playbook" \
+      --extra-vars "hermes_telegram_state=$telegram_state" \
+      --extra-vars "hermes_telegram_env_source=$telegram_env" \
+      --extra-vars "hermes_gateway_profile=$gateway_profile"
+}
+
+run_telegram_verify() {
+  local requested_inventory_path="$1"
+
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --inventory "$requested_inventory_path" "$telegram_verify_playbook" \
+      --extra-vars "hermes_telegram_state=$telegram_state" \
+      --extra-vars "hermes_gateway_profile=$gateway_profile"
 }
 
 current_phase=""
@@ -295,27 +391,50 @@ deploy_new_target() {
 }
 
 deploy_runtime() {
+  local runtime_validation_args=(--runtime --inventory "$inventory_path")
+
   if [[ -z "$inventory_path" ]]; then
     run_phase_capture inventory_path inventory \
       write_inventory "$host" "$ssh_user" "$private_key"
+    runtime_validation_args=(--runtime --inventory "$inventory_path")
   else
     last_completed_phase="inventory"
+  fi
+  if [[ "$telegram_state" == "enabled" ]]; then
+    runtime_validation_args+=(
+      --telegram-state "$telegram_state"
+      --gateway-profile "$gateway_profile"
+    )
   fi
   run_phase configure \
     run_ansible "$inventory_path" "$hermes_env" "$codex_auth" "$model_provider" "$model" "$ssh_cidrs_json" "$public_key"
   run_phase verify \
-    "$repo_root/scripts/validate.sh" --runtime --inventory "$inventory_path"
+    "$repo_root/scripts/validate.sh" "${runtime_validation_args[@]}"
   printf 'Hermes Minimal deployment verified successfully.\n'
+}
+
+deploy_telegram_runtime() {
+  run_phase telegram-configure run_telegram_ansible "$inventory_path"
+  run_phase telegram-verify run_telegram_verify "$inventory_path"
+  printf 'Hermes Telegram gateway state verified successfully.\n'
 }
 
 validate_common_request() {
   "$repo_root/scripts/validate.sh" --structure
+}
+
+prepare_ssh_source_cidrs() {
   [[ "${#ssh_source_cidrs[@]}" -gt 0 ]] \
     || die "at least one --ssh-source-cidr is required"
+  local ssh_source_cidr
+  for ssh_source_cidr in "${ssh_source_cidrs[@]}"; do
+    validate_cidr "$ssh_source_cidr"
+  done
   ssh_cidrs_json="$(cidrs_json "${ssh_source_cidrs[@]}")"
 }
 
 prepare_new_request() {
+  prepare_ssh_source_cidrs
   validate_location "$location"
   [[ -n "$server_type" ]] || die "--server-type is required"
   validate_server_type "$server_type"
@@ -325,6 +444,7 @@ prepare_new_request() {
 }
 
 prepare_existing_request() {
+  prepare_ssh_source_cidrs
   validate_host "$host"
   [[ -n "$ssh_user" ]] || die "--ssh-user is required"
   [[ -n "$public_key" ]] || die "--ssh-public-key is required"
@@ -335,8 +455,32 @@ prepare_existing_request() {
   inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
 }
 
+prepare_telegram_request() {
+  [[ -z "$location" ]] || die "--location is not supported for the telegram target"
+  [[ -z "$server_type" ]] || die "--server-type is not supported for the telegram target"
+  [[ -z "$hcloud_ssh_key_name" ]] || die "--hcloud-ssh-key-name is not supported for the telegram target"
+  [[ "${#ssh_source_cidrs[@]}" -eq 0 ]] \
+    || die "--ssh-source-cidr is not supported for the telegram target"
+  [[ -z "$hermes_env" ]] || die "--hermes-env is not supported for the telegram target"
+  [[ -z "$codex_auth" ]] || die "--codex-auth is not supported for the telegram target"
+  [[ -z "$model_provider" ]] || die "--model-provider is not supported for the telegram target"
+  [[ -z "$model" ]] || die "--model is not supported for the telegram target"
+  validate_host "$host"
+  [[ -n "$ssh_user" ]] || die "--ssh-user is required"
+  [[ -n "$public_key" ]] || die "--ssh-public-key is required"
+  [[ -n "$private_key" ]] || die "--ssh-private-key is required"
+  validate_user "$ssh_user"
+  validate_public_key "$public_key"
+  validate_key_path "$private_key"
+  validate_key_pair "$public_key" "$private_key"
+  inventory_path="$(write_inventory "$host" "$ssh_user" "$private_key")"
+}
+
 validate_deploy_request() {
   [[ "$confirmed" == "true" ]] || die "deploy requires --confirm-external-mutation"
+  if [[ "$target" == "telegram" ]]; then
+    return
+  fi
   [[ -n "$private_key" ]] || die "--ssh-private-key is required"
   [[ -n "$model_provider" ]] || die "--model-provider is required"
   [[ -n "$model" ]] || die "--model is required"
@@ -359,16 +503,25 @@ dispatch_plan() {
   case "$target" in
     new)
       terraform_plan "$location" "$server_type" "$public_key" "$hcloud_ssh_key_name" "$ssh_cidrs_json"
-      ansible_syntax_plan "$repo_root/ansible/inventory.example.ini" "$public_key"
+      ansible_syntax_plan "$repo_root/ansible/inventory.example.ini" "$public_key" \
+        "$telegram_state" "$telegram_env" "$gateway_profile"
       ;;
     existing)
-      ansible_syntax_plan "$inventory_path" "$public_key"
+      ansible_syntax_plan "$inventory_path" "$public_key" \
+        "$telegram_state" "$telegram_env" "$gateway_profile"
+      ;;
+    telegram)
+      telegram_syntax_plan
       ;;
   esac
 }
 
 dispatch_deploy() {
   last_completed_phase="request-validation"
+  if [[ "$target" == "telegram" ]]; then
+    deploy_telegram_runtime
+    return
+  fi
   if [[ "$target" == "new" ]]; then
     deploy_new_target
   fi
@@ -389,7 +542,7 @@ if [[ "$action" != "plan" && "$action" != "deploy" ]]; then
   usage
   exit 2
 fi
-if [[ "$target" != "new" && "$target" != "existing" ]]; then
+if [[ "$target" != "new" && "$target" != "existing" && "$target" != "telegram" ]]; then
   usage
   exit 2
 fi
@@ -406,12 +559,17 @@ hermes_env=""
 codex_auth=""
 model_provider=""
 model=""
+telegram_state=""
+telegram_env=""
+gateway_profile=""
+telegram_env_supplied="false"
+gateway_profile_supplied="false"
 ssh_source_cidrs=()
 confirmed="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --location | --server-type | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --codex-auth | --model-provider | --model)
+    --location | --server-type | --hcloud-ssh-key-name | --ssh-public-key | --ssh-private-key | --host | --ssh-user | --hermes-env | --codex-auth | --model-provider | --model | --telegram-state | --telegram-env | --gateway-profile)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       option="$1"
       value="$2"
@@ -428,6 +586,15 @@ while [[ $# -gt 0 ]]; do
         --codex-auth) codex_auth="$value" ;;
         --model-provider) model_provider="$value" ;;
         --model) model="$value" ;;
+        --telegram-state) telegram_state="$value" ;;
+        --telegram-env)
+          telegram_env="$value"
+          telegram_env_supplied="true"
+          ;;
+        --gateway-profile)
+          gateway_profile="$value"
+          gateway_profile_supplied="true"
+          ;;
       esac
       ;;
     --confirm-external-mutation)
@@ -436,7 +603,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ssh-source-cidr)
       [[ $# -ge 2 ]] || die "$1 requires a value"
-      validate_cidr "$2"
       ssh_source_cidrs+=("$2")
       shift 2
       ;;
@@ -444,13 +610,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$target" == "telegram" ]]; then
+  [[ -n "$telegram_state" ]] || die "--telegram-state is required for the telegram target"
+else
+  [[ -z "$telegram_state" ]] || die "--telegram-state is only supported for the telegram target"
+  if [[ "$telegram_env_supplied" == "true" && "$gateway_profile_supplied" == "true" ]]; then
+    telegram_state="enabled"
+  fi
+fi
+
+validate_telegram_option_contract
 validate_common_request
 
-if [[ "$target" == "new" ]]; then
-  prepare_new_request
-else
-  prepare_existing_request
-fi
+case "$target" in
+  new) prepare_new_request ;;
+  existing) prepare_existing_request ;;
+  telegram) prepare_telegram_request ;;
+esac
 
 case "$action" in
   plan)

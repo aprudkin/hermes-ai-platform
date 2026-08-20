@@ -67,3 +67,7 @@
       failed_when: >-
         runtime_inference_probe.rc != 0 or
         runtime_inference_probe.stdout | trim | length == 0
+
+- name: Verify optional Telegram gateway state
+  ansible.builtin.import_playbook: telegram_verify.yml
+  when: hermes_telegram_state | default("") == "enabled"

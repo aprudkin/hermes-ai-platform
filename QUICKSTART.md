@@ -62,5 +62,53 @@ Hermes imports it into its own credential store.
 The installer validates the selected credential shape and never prints its
 content. Subscription use remains subject to the ChatGPT plan's Codex limits.
 
-Deployment is intentionally absent from this quickstart because it creates or
-changes external systems. See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md).
+## 4. Prepare and plan Telegram access
+
+Telegram credentials and allowlists use a separate controller-local file
+outside the repository and `.generated/`, with mode `0400` or `0600`. It must
+contain exactly these six assignments; populate only the protected external
+copy:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ALLOWED_USERS=
+TELEGRAM_ALLOWED_CHATS=
+TELEGRAM_REQUIRE_MENTION=true
+TELEGRAM_EXCLUSIVE_BOT_MENTIONS=true
+TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES=false
+```
+
+The user list accepts one or more unique positive decimal IDs. The group list
+accepts one or more unique negative decimal IDs. Wildcards, allow-all keys,
+webhook keys, and group-wide authorization keys are rejected. Every configured
+user may use DMs and may invoke the bot in every configured group through a
+command, reply, or direct mention. Ordinary unmentioned group messages are not
+observed.
+
+The targeted plan is local-only and does not contact the host:
+
+```bash
+./installer/install.sh plan telegram --telegram-state enabled --host 192.0.2.44 --ssh-user ubuntu --ssh-public-key /protected/path/luk.pub --ssh-private-key /protected/path/luk --telegram-env /protected/path/telegram.env --gateway-profile manager
+```
+
+The separately authorized enable and disable forms are:
+
+```bash
+./installer/install.sh deploy telegram --telegram-state enabled --host 192.0.2.44 --ssh-user ubuntu --ssh-public-key /protected/path/luk.pub --ssh-private-key /protected/path/luk --telegram-env /protected/path/telegram.env --gateway-profile manager --confirm-external-mutation
+```
+
+```bash
+./installer/install.sh deploy telegram --telegram-state disabled --host 192.0.2.44 --ssh-user ubuntu --ssh-public-key /protected/path/luk.pub --ssh-private-key /protected/path/luk --confirm-external-mutation
+```
+
+`manager` is the first production-instance selection, not a hard-coded global
+default. The runtime stays on `default` when no explicit gateway profile is
+installed. Full `new` and `existing` deployments may add
+`--telegram-env /protected/path/telegram.env --gateway-profile manager` as an
+optional pair. Omitting both preserves the existing non-Telegram behavior;
+supplying only one fails before external tools.
+
+The commands above document interfaces; they do not authorize host access,
+credential installation, container recreation, Telegram probes or messages,
+group-administrator changes, or GitHub mutation. See
+[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for the exact production gate.

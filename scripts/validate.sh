@@ -25,7 +25,11 @@ require_artifacts() {
     terraform/outputs.tf
     ansible/site.yml
     ansible/verify.yml
+    ansible/telegram_gateway.yml
+    ansible/telegram_verify.yml
     ansible/requirements.yml
+    ansible/roles/hermes/tasks/validate_telegram.yml
+    ansible/roles/hermes/tasks/telegram_gateway.yml
     docker/docker-compose.yml
     .github/workflows/validate.yml
     installer/install.sh
@@ -33,7 +37,14 @@ require_artifacts() {
     profiles/devops/SOUL.md
     profiles/coding/SOUL.md
     profiles/research/SOUL.md
+    scripts/telegram_env.py
     scripts/validate.sh
+    tests/telegram_env_test.sh
+    tests/compose_gateway_profile_test.sh
+    tests/fixtures/telegram_gateway.yml
+    tests/ansible_telegram_gateway_test.sh
+    tests/ansible_telegram_verify_test.sh
+    tests/validate_runtime_test.sh
     tests/run.sh
   )
   local relative_path
@@ -110,11 +121,19 @@ validate_ansible() {
       "$repo_root/ansible/site.yml" \
       --extra-vars "hermes_env_source=$repo_root/configs/hermes.env.example" \
       --extra-vars "hermes_root_ssh_public_key_source=/dev/null"
-  printf 'PASS Ansible syntax\n'
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --syntax-check \
+      --inventory "$repo_root/ansible/inventory.example.ini" \
+      "$repo_root/ansible/telegram_gateway.yml"
+  ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ansible-playbook --syntax-check \
+      --inventory "$repo_root/ansible/inventory.example.ini" \
+      "$repo_root/ansible/telegram_verify.yml"
+  printf 'PASS Ansible full and targeted syntax\n'
 
   if need_command ansible-lint "ansible-lint"; then
-    (cd "$repo_root" && ansible-lint ansible/site.yml)
-    printf 'PASS ansible-lint\n'
+    (cd "$repo_root" && ansible-lint ansible/site.yml ansible/telegram_gateway.yml)
+    printf 'PASS ansible-lint full and targeted mutation playbooks\n'
   elif [[ "$allow_missing_tools" != "true" ]]; then
     return 1
   fi
@@ -127,9 +146,11 @@ validate_compose() {
     fi
     return 1
   fi
-  HERMES_DATA_DIR=/opt/hermes/data docker compose \
+  HERMES_DATA_DIR=/opt/hermes/data HERMES_GATEWAY_PROFILE=default docker compose \
     --file "$repo_root/docker/docker-compose.yml" config --quiet
-  printf 'PASS Docker Compose config\n'
+  HERMES_DATA_DIR=/opt/hermes/data HERMES_GATEWAY_PROFILE=manager docker compose \
+    --file "$repo_root/docker/docker-compose.yml" config --quiet
+  printf 'PASS Docker Compose config for default and manager profiles\n'
 }
 
 validate_secrets() {
@@ -137,9 +158,22 @@ validate_secrets() {
   command -v rg >/dev/null 2>&1 \
     || { error "repository secret scan requires ripgrep (rg)"; return 1; }
   secret_pattern='-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----|^[[:space:]]*(HCLOUD_TOKEN|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|GITHUB_TOKEN|GH_TOKEN)=[^[:space:]#].*|gh[pousr]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}'
-  if rg --hidden --glob '!.git/**' --glob '!terraform/.terraform/**' \
+  if rg --line-number --hidden --glob '!.git/**' --glob '!terraform/.terraform/**' \
     --glob '!.generated/**' -- "$secret_pattern" "$repo_root" \
-    | rg -v 'secret-scan: allow' >/dev/null; then
+    | awk \
+      -v allowed_path="$repo_root/tests/ansible_telegram_gateway_test.sh:" \
+      -v allowed_assignment='TELEGRAM_BOT_TOKEN=24681012:fixture_secret_abcdefghijklmnop' '
+        index($0, allowed_path) == 1 {
+          candidate = substr($0, length(allowed_path) + 1)
+          sub(/^[0-9]+:/, "", candidate)
+          if (candidate == allowed_assignment && allowed_count == 0) {
+            allowed_count = 1
+            next
+          }
+        }
+        { disallowed = 1 }
+        END { exit(disallowed ? 0 : 1) }
+      '; then
     error "a private key, populated credential, or token-shaped value was found in repository files"
   fi
   printf 'PASS repository secret-pattern scan\n'
@@ -147,19 +181,53 @@ validate_secrets() {
 
 validate_runtime() {
   local inventory_path=""
+  local telegram_state=""
+  local gateway_profile=""
+  local telegram_state_supplied="false"
+  local gateway_profile_supplied="false"
+  local telegram_vars=()
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --inventory) inventory_path="${2:-}"; shift 2 ;;
+      --inventory)
+        [[ $# -ge 2 ]] || { error "--inventory requires a value"; exit 2; }
+        inventory_path="$2"
+        shift 2
+        ;;
+      --telegram-state)
+        [[ $# -ge 2 ]] || { error "--telegram-state requires a value"; exit 2; }
+        telegram_state="$2"
+        telegram_state_supplied="true"
+        shift 2
+        ;;
+      --gateway-profile)
+        [[ $# -ge 2 ]] || { error "--gateway-profile requires a value"; exit 2; }
+        gateway_profile="$2"
+        gateway_profile_supplied="true"
+        shift 2
+        ;;
       *) error "unknown runtime validation argument: $1"; exit 2 ;;
     esac
   done
   [[ -n "$inventory_path" && -f "$inventory_path" ]] \
     || { error "runtime validation requires --inventory FILE"; exit 2; }
+  if [[ "$telegram_state_supplied" == "true" || "$gateway_profile_supplied" == "true" ]]; then
+    [[ "$telegram_state_supplied" == "true" && "$gateway_profile_supplied" == "true" ]] \
+      || { error "runtime Telegram validation requires both --telegram-state and --gateway-profile"; exit 2; }
+    [[ "$telegram_state" == "enabled" ]] \
+      || { error "runtime --telegram-state must be enabled"; exit 2; }
+    [[ "$gateway_profile" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] \
+      || { error "runtime --gateway-profile is invalid"; exit 2; }
+    telegram_vars=(
+      --extra-vars "hermes_telegram_state=$telegram_state"
+      --extra-vars "hermes_gateway_profile=$gateway_profile"
+    )
+  fi
   command -v ansible-playbook >/dev/null 2>&1 \
     || { error "runtime validation requires ansible-playbook"; exit 1; }
   ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
-    ansible-playbook --inventory "$inventory_path" "$repo_root/ansible/verify.yml"
+    ansible-playbook --inventory "$inventory_path" "$repo_root/ansible/verify.yml" \
+      "${telegram_vars[@]}"
   printf 'PASS remote runtime and profile probes\n'
 }
 

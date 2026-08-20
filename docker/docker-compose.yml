@@ -7,12 +7,19 @@ services:
     init: false
     restart: unless-stopped
     network_mode: host
-    command: ["gateway", "run"]
+    command: ["hermes", "-p", "${HERMES_GATEWAY_PROFILE:-default}", "gateway", "run"]
     environment:
       HERMES_UID: "${HERMES_UID:-10000}"
       HERMES_GID: "${HERMES_GID:-10000}"
       API_SERVER_ENABLED: "true"
       API_SERVER_HOST: "127.0.0.1"
+      HERMES_TELEGRAM_DISABLE_FALLBACK_IPS: "true"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_ALLOWED_USERS: "${TELEGRAM_ALLOWED_USERS:-}"
+      TELEGRAM_ALLOWED_CHATS: "${TELEGRAM_ALLOWED_CHATS:-}"
+      TELEGRAM_REQUIRE_MENTION: "${TELEGRAM_REQUIRE_MENTION:-}"
+      TELEGRAM_EXCLUSIVE_BOT_MENTIONS: "${TELEGRAM_EXCLUSIVE_BOT_MENTIONS:-}"
+      TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES: "${TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES:-}"
     volumes:
       - ${HERMES_DATA_DIR:-/opt/hermes/data}:/opt/data
     healthcheck:

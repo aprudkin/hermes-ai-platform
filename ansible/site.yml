@@ -27,11 +27,20 @@
           - hermes_model | default("") | length > 0
           - hermes_ssh_source_cidrs | default([]) | length > 0
           - hermes_root_ssh_public_key_source | default("") | length > 0
+          - >-
+            (hermes_telegram_state | default("") == "" and
+             hermes_telegram_env_source | default("") | length == 0 and
+             hermes_gateway_profile | default("") | length == 0) or
+            (hermes_telegram_state | default("") == "enabled" and
+             hermes_telegram_env_source | default("") | length > 0 and
+             hermes_gateway_profile | default("") is
+             match('^[A-Za-z0-9][A-Za-z0-9_-]*$'))
         fail_msg: >-
           Minimal supports Ubuntu 24.04+ and requires either a populated
           controller-local Hermes .env for API-key providers or a protected
           Codex CLI auth file for openai-codex, plus explicit model values and
-          administrative SSH source CIDRs.
+          administrative SSH source CIDRs. Optional Telegram configuration
+          requires enabled state with both a protected source and profile.
 
   roles:
     - role: base

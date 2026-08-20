@@ -1,14 +1,7 @@
 ---
 - name: Restart Hermes
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --file
-      - "{{ hermes_app_dir }}/docker-compose.yml"
-      - up
-      - --detach
-      - --force-recreate
+    argv: "{{ hermes_compose_argv_prefix + ['up', '--detach', '--force-recreate'] }}"
   environment:
     HERMES_DATA_DIR: "{{ hermes_data_dir }}"
   register: hermes_restart

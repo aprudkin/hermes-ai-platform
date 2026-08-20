@@ -14,6 +14,7 @@ public_key="$fixture_root/luk.pub"
 private_key="$fixture_root/luk"
 provider_env="$fixture_root/hermes.env"
 codex_auth="$fixture_root/codex-auth.json"
+telegram_env="$fixture_root/telegram.env"
 
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestFixtureOnly hermes-test\n' >"$public_key"
 : >"$private_key"
@@ -21,6 +22,15 @@ printf 'OPENROUTER_API_KEY=test-only-provider-value\n' >"$provider_env"
 printf '{"tokens":{"access_token":"fixture-access","refresh_token":"fixture-refresh"}}\n' >"$codex_auth"
 chmod 600 "$provider_env"
 chmod 600 "$codex_auth"
+{
+  printf 'TELEGRAM_BOT_TOKEN=%s:%s\n' '123456789' 'fixture_value_abcdefghijklmnop'
+  printf 'TELEGRAM_ALLOWED_USERS=101,202\n'
+  printf 'TELEGRAM_ALLOWED_CHATS=-1001,-1002\n'
+  printf 'TELEGRAM_REQUIRE_MENTION=true\n'
+  printf 'TELEGRAM_EXCLUSIVE_BOT_MENTIONS=true\n'
+  printf 'TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES=false\n'
+} >"$telegram_env"
+chmod 600 "$telegram_env"
 
 cat >"$fake_bin/terraform" <<'FAKE'
 #!/usr/bin/env bash
@@ -42,6 +52,18 @@ cat >"$fake_bin/ansible-playbook" <<'FAKE'
 printf 'ansible %s\n' "$*" >>"$COMMAND_LOG"
 
 case " $* " in
+  *'/ansible/telegram_gateway.yml '*)
+    if [[ "${FAIL_TELEGRAM_CONFIGURE:-0}" == "1" ]]; then
+      printf 'fixture targeted Telegram configuration failure\n' >&2
+      exit 51
+    fi
+    ;;
+  *'/ansible/telegram_verify.yml '*)
+    if [[ "${FAIL_TELEGRAM_VERIFY:-0}" == "1" ]]; then
+      printf 'fixture targeted Telegram verification failure\n' >&2
+      exit 52
+    fi
+    ;;
   *'/ansible/site.yml '*)
     if [[ "${FAIL_ANSIBLE:-0}" == "1" ]]; then
       printf 'fixture Ansible failure\n' >&2
@@ -136,6 +158,20 @@ assert_failure_report() {
     || fail "failure must not print the deployment success message"
 }
 
+assert_no_telegram_values() {
+  local output_path="$1"
+
+  ! grep -Eq 'fixture_value_abcdefghijklmnop|101,202|-1001,-1002' \
+    "$output_path" "$command_log" \
+    || fail "Telegram protected values must not appear in output or command logs"
+}
+
+assert_targeted_only() {
+  ! grep -Eq '/ansible/(site|verify|root_hardening)\.yml|roles/(base|docker)' \
+    "$command_log" \
+    || fail "targeted Telegram deploy must not invoke full/base/root playbooks"
+}
+
 : >"$command_log"
 set +e
 MISMATCH_KEYPAIR=1 run_installer "$fixture_root/keypair-mismatch.out" \
@@ -173,6 +209,8 @@ assert_log_order \
   'ansible .*ansible/site.yml ' \
   'ansible .*ansible/verify.yml'
 assert_command_counts 5 2
+! grep -q -- 'hermes_telegram_' "$command_log" \
+  || fail "full new-host deploy without Telegram options must remain backward compatible"
 grep -q 'Hermes Minimal deployment verified successfully.' "$fixture_root/new-success.out" \
   || fail "confirmed new-host deploy must report success after runtime verification"
 printf 'PASS confirmed new-host deploy runs every phase in order\n'
@@ -190,6 +228,8 @@ assert_log_order \
   'ansible .*ansible/site.yml ' \
   'ansible .*ansible/verify.yml'
 assert_command_counts 0 2
+! grep -q -- 'hermes_telegram_' "$command_log" \
+  || fail "full existing-host deploy without Telegram options must remain backward compatible"
 grep -q -- "hermes_root_ssh_public_key_source=$public_key" "$command_log" \
   || fail "existing-host deploy must pass the validated root public-key source to Ansible"
 grep -q 'Hermes Minimal deployment verified successfully.' "$fixture_root/existing-success.out" \
@@ -236,6 +276,153 @@ grep -q -- '--codex-auth is required for openai-codex' \
   "$fixture_root/codex-subscription-missing-auth.out" \
   || fail "missing Codex auth failure must identify --codex-auth"
 printf 'PASS Codex subscription deploy fails before external tools without auth\n'
+
+: >"$command_log"
+set +e
+run_installer "$fixture_root/telegram-unconfirmed.out" \
+  "$repo_root/installer/install.sh" deploy telegram \
+    --telegram-state enabled --host 192.0.2.44 --ssh-user ubuntu \
+    --ssh-public-key "$public_key" --ssh-private-key "$private_key" \
+    --telegram-env "$telegram_env" --gateway-profile manager
+telegram_unconfirmed_status=$?
+set -e
+
+[[ "$telegram_unconfirmed_status" -ne 0 ]] \
+  || fail "targeted Telegram deploy must require explicit confirmation"
+assert_command_counts 0 0
+grep -q -- 'deploy requires --confirm-external-mutation' \
+  "$fixture_root/telegram-unconfirmed.out" \
+  || fail "unconfirmed targeted deploy must identify the confirmation boundary"
+assert_no_telegram_values "$fixture_root/telegram-unconfirmed.out"
+printf 'PASS unconfirmed targeted Telegram deploy invokes neither playbook\n'
+
+: >"$command_log"
+run_installer "$fixture_root/telegram-enabled-success.out" \
+  "$repo_root/installer/install.sh" deploy telegram \
+    --telegram-state enabled --host 192.0.2.44 --ssh-user ubuntu \
+    --ssh-public-key "$public_key" --ssh-private-key "$private_key" \
+    --telegram-env "$telegram_env" --gateway-profile manager \
+    --confirm-external-mutation
+
+assert_log_order \
+  'ansible .*ansible/telegram_gateway.yml ' \
+  'ansible .*ansible/telegram_verify.yml '
+assert_command_counts 0 2
+assert_targeted_only
+grep -q -- "hermes_telegram_env_source=$telegram_env" "$command_log" \
+  || fail "targeted enable must pass only the protected Telegram source path"
+grep -q -- 'hermes_gateway_profile=manager' "$command_log" \
+  || fail "targeted enable must pass the selected profile"
+[[ "$(grep -c -- 'hermes_telegram_state=enabled' "$command_log")" -eq 2 ]] \
+  || fail "both targeted enabled playbooks must receive enabled state"
+[[ "$(grep -c -- 'hermes_telegram_env_source=' "$command_log")" -eq 1 ]] \
+  || fail "only targeted configuration may receive the Telegram source path"
+assert_no_telegram_values "$fixture_root/telegram-enabled-success.out"
+printf 'PASS targeted enabled deploy runs only configure and read-only verification\n'
+
+: >"$command_log"
+run_installer "$fixture_root/telegram-disabled-success.out" \
+  "$repo_root/installer/install.sh" deploy telegram \
+    --telegram-state disabled --host 192.0.2.44 --ssh-user ubuntu \
+    --ssh-public-key "$public_key" --ssh-private-key "$private_key" \
+    --confirm-external-mutation
+
+assert_log_order \
+  'ansible .*ansible/telegram_gateway.yml ' \
+  'ansible .*ansible/telegram_verify.yml '
+assert_command_counts 0 2
+assert_targeted_only
+[[ "$(grep -c -- 'hermes_telegram_state=disabled' "$command_log")" -eq 2 ]] \
+  || fail "both targeted disabled playbooks must receive disabled state"
+grep -q -- 'hermes_telegram_env_source= ' "$command_log" \
+  || fail "targeted disable must pass an empty source only to configuration"
+grep -q -- 'hermes_gateway_profile=\([[:space:]]\|$\)' "$command_log" \
+  || fail "targeted disable must not select a new profile"
+assert_no_telegram_values "$fixture_root/telegram-disabled-success.out"
+printf 'PASS targeted disabled deploy runs only explicit disable and verification\n'
+
+: >"$command_log"
+set +e
+FAIL_TELEGRAM_CONFIGURE=1 run_installer "$fixture_root/telegram-configure-failure.out" \
+  "$repo_root/installer/install.sh" deploy telegram \
+    --telegram-state enabled --host 192.0.2.44 --ssh-user ubuntu \
+    --ssh-public-key "$public_key" --ssh-private-key "$private_key" \
+    --telegram-env "$telegram_env" --gateway-profile manager \
+    --confirm-external-mutation
+telegram_configure_status=$?
+set -e
+
+[[ "$telegram_configure_status" -eq 51 ]] \
+  || fail "targeted configure failure must propagate status 51, got $telegram_configure_status"
+assert_command_counts 0 1
+assert_targeted_only
+! grep -q -- '/ansible/telegram_verify.yml' "$command_log" \
+  || fail "targeted configure failure must stop before verification"
+! grep -q -- 'hermes_telegram_state=disabled' "$command_log" \
+  || fail "targeted enable failure must not auto-disable Telegram"
+assert_failure_report "$fixture_root/telegram-configure-failure.out" \
+  "telegram-configure" "request-validation"
+assert_no_telegram_values "$fixture_root/telegram-configure-failure.out"
+printf 'PASS targeted configure failure stops without automatic cleanup\n'
+
+: >"$command_log"
+set +e
+FAIL_TELEGRAM_VERIFY=1 run_installer "$fixture_root/telegram-verify-failure.out" \
+  "$repo_root/installer/install.sh" deploy telegram \
+    --telegram-state disabled --host 192.0.2.44 --ssh-user ubuntu \
+    --ssh-public-key "$public_key" --ssh-private-key "$private_key" \
+    --confirm-external-mutation
+telegram_verify_status=$?
+set -e
+
+[[ "$telegram_verify_status" -eq 52 ]] \
+  || fail "targeted verify failure must propagate status 52, got $telegram_verify_status"
+assert_command_counts 0 2
+assert_targeted_only
+[[ "$(grep -c -- '/ansible/telegram_gateway.yml' "$command_log")" -eq 1 ]] \
+  || fail "targeted verification failure must not repeat configuration or cleanup"
+assert_failure_report "$fixture_root/telegram-verify-failure.out" \
+  "telegram-verify" "telegram-configure"
+assert_no_telegram_values "$fixture_root/telegram-verify-failure.out"
+printf 'PASS targeted verification failure reports safe resume without cleanup\n'
+
+: >"$command_log"
+run_installer "$fixture_root/new-telegram-success.out" \
+  "$repo_root/installer/install.sh" deploy new --location hel1 --server-type cx23 \
+    --hcloud-ssh-key-name Luk --ssh-public-key "$public_key" \
+    --ssh-private-key "$private_key" --ssh-source-cidr 192.0.2.10/32 \
+    --hermes-env "$provider_env" --model-provider openrouter \
+    --model test/model --telegram-env "$telegram_env" \
+    --gateway-profile manager --confirm-external-mutation
+
+assert_command_counts 5 2
+grep -q -- "/ansible/site.yml .*hermes_telegram_state=enabled .*hermes_telegram_env_source=$telegram_env .*hermes_gateway_profile=manager" \
+  "$command_log" \
+  || fail "full new-host deploy must pass the complete Telegram option pair to site configuration"
+grep -q -- "/ansible/verify.yml .*hermes_telegram_state=enabled .*hermes_gateway_profile=manager" \
+  "$command_log" \
+  || fail "full new-host deploy must pass Telegram state/profile to runtime verification"
+assert_no_telegram_values "$fixture_root/new-telegram-success.out"
+printf 'PASS full new-host deploy reuses Telegram source path/profile/state only\n'
+
+: >"$command_log"
+run_installer "$fixture_root/existing-telegram-success.out" \
+  "$repo_root/installer/install.sh" deploy existing \
+    --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key "$private_key" \
+    --ssh-public-key "$public_key" --ssh-source-cidr 192.0.2.10/32 \
+    --hermes-env "$provider_env" --model-provider openrouter --model test/model \
+    --telegram-env "$telegram_env" --gateway-profile manager \
+    --confirm-external-mutation
+
+assert_command_counts 0 2
+grep -q -- "/ansible/site.yml .*hermes_telegram_state=enabled .*hermes_telegram_env_source=$telegram_env .*hermes_gateway_profile=manager" \
+  "$command_log" \
+  || fail "full existing-host deploy must pass the complete Telegram option pair to site configuration"
+grep -q -- "/ansible/verify.yml .*hermes_telegram_state=enabled .*hermes_gateway_profile=manager" \
+  "$command_log" \
+  || fail "full existing-host deploy must pass Telegram state/profile to runtime verification"
+assert_no_telegram_values "$fixture_root/existing-telegram-success.out"
+printf 'PASS full existing-host deploy reuses Telegram source path/profile/state only\n'
 
 : >"$command_log"
 set +e

@@ -22,6 +22,8 @@ Hetzner `hel1` and verified end to end on 2026-08-18.
   Hermes' supported `openai-codex` provider, without an OpenAI API key;
 - Manager, DevOps, Coding, and Research as supported Hermes profiles inside
   that one container, each with its own SOUL, sessions, skills, and memory;
+- an optional, profile-scoped Telegram long-polling gateway for explicit users
+  and groups, with one gateway process and no webhook or inbound listener;
 - fail-closed installer modes, behavioral tests, static validation, and CI.
 
 Postgres, Redis, DNS, a dashboard, public API exposure, a private Hetzner
@@ -69,6 +71,28 @@ mutation boundary.
 The image and provider are pinned in code. Review upstream release notes before
 changing either pin.
 
+## Telegram gateway source boundary
+
+Telegram uses a separate controller-local mode-`0400`/`0600` six-key file; it
+does not use `configs/hermes.env.example`. The source implementation accepts
+only explicit users crossed with explicit groups, requires a command, reply, or
+direct mention in groups, and retains Telegram privacy mode. The first intended
+production instance selects the `manager` profile, but `manager` is not a
+global default: ordinary Compose startup remains on `default`, and the
+installer accepts an explicit supported profile.
+
+The targeted plan, enable, and disable interfaces are documented in
+[QUICKSTART.md](QUICKSTART.md). Disable removes only the managed Telegram block,
+restores the retained pre-Telegram gateway profile, and recreates the single
+Hermes service. It preserves provider credentials, Codex auth, profiles,
+sessions, memory, API credentials, and rollback evidence.
+
+The gateway contract is pinned to the upstream
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/website/docs/user-guide/messaging/telegram.md)
+and [v2026.8.16 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.16).
+Passing syntax, Compose configuration, container health, or a connected log
+marker is deployment evidence only; it is not Telegram behavioral proof.
+
 ## Verification status
 
 On 2026-08-18, the authorized deployment created one `cpx22` server and one
@@ -77,4 +101,8 @@ ingress firewall in `hel1`. A repeat Ansible run completed with `changed=0` and
 profile identities, complete model configuration, and a successful one-shot
 inference through the ChatGPT subscription. Local Docker remains unavailable,
 so local `docker compose config` is still skipped; the live Docker runtime is
-the behavioral deployment evidence.
+the behavioral deployment evidence for the original Minimal deployment. The
+Telegram gateway has not been installed or behaviorally verified in production;
+host access, protected credential installation, service recreation, Bot API
+probes, visible messages, group-administrator changes, and GitHub mutation each
+remain separately authorized.

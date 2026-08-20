@@ -9,6 +9,23 @@ hermes_runtime_group: "10000"
 hermes_runtime_home: /opt/data
 hermes_codex_home: /opt/data/.codex
 hermes_auth_store_path: "{{ hermes_data_dir }}/auth.json"
+hermes_gateway_profile: ""
+hermes_telegram_state: ""
+hermes_telegram_env_source: ""
+hermes_repo_root: "{{ playbook_dir }}/.."
+hermes_gateway_runtime_env_path: "{{ hermes_app_dir }}/gateway.env"
+hermes_gateway_profile_backup_path: "{{ hermes_app_dir }}/gateway-profile.pre-telegram"
+hermes_gateway_managed_profile_path: "{{ hermes_app_dir }}/gateway-profile.telegram-managed"
+hermes_gateway_pending_reconciliation_path: "{{ hermes_app_dir }}/telegram-reconciliation.pending"
+hermes_compose_source_path: "{{ playbook_dir }}/../docker/docker-compose.yml"
+hermes_telegram_block_marker: "# {mark} HERMES MANAGED TELEGRAM"
+hermes_compose_argv_prefix:
+  - docker
+  - compose
+  - --env-file
+  - "{{ hermes_gateway_runtime_env_path }}"
+  - --file
+  - "{{ hermes_app_dir }}/docker-compose.yml"
 hermes_cli_argv_prefix:
   - docker
   - exec
