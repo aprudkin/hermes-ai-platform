@@ -4,26 +4,36 @@
 
 - name: Install Compose definition
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../docker/docker-compose.yml"
+    src: "{{ hermes_compose_source_path }}"
     dest: "{{ hermes_app_dir }}/docker-compose.yml"
     owner: root
     group: root
     mode: "0644"
   notify: Restart Hermes
 
+- name: Create the default protected gateway runtime environment
+  ansible.builtin.copy:
+    content: "HERMES_GATEWAY_PROFILE=default\n"
+    dest: "{{ hermes_gateway_runtime_env_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+- name: Protect the gateway runtime environment
+  ansible.builtin.file:
+    path: "{{ hermes_gateway_runtime_env_path }}"
+    state: file
+    owner: root
+    group: root
+    mode: "0600"
+
 - name: Install the selected provider credential
   ansible.builtin.include_tasks: install_credentials.yml
 
 - name: Start Hermes runtime
   ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --file
-      - "{{ hermes_app_dir }}/docker-compose.yml"
-      - up
-      - --detach
-      - --remove-orphans
+    argv: "{{ hermes_compose_argv_prefix + ['up', '--detach', '--remove-orphans'] }}"
   environment:
     HERMES_DATA_DIR: "{{ hermes_data_dir }}"
   register: hermes_compose_up
@@ -76,6 +86,10 @@
   when: hermes_model_provider != "openai-codex"
   no_log: true
   notify: Restart Hermes
+
+- name: Apply the optional protected Telegram gateway state
+  ansible.builtin.include_tasks: telegram_gateway.yml
+  when: hermes_telegram_state == 'enabled'
 
 - name: Verify every profile through the Hermes CLI
   ansible.builtin.command:

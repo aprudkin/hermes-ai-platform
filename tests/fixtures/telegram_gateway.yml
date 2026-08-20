@@ -1,0 +1,51 @@
+---
+- name: Exercise the Hermes Telegram gateway state machine twice
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  environment:
+    PATH: "{{ lookup('ansible.builtin.env', 'PATH') }}"
+    HERMES_COMMAND_LOG: "{{ lookup('ansible.builtin.env', 'HERMES_COMMAND_LOG') }}"
+    HERMES_FAKE_APP_DIR: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_APP_DIR') }}"
+    HERMES_FAKE_IDENTITY: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_IDENTITY') }}"
+    HERMES_FAKE_GROUP: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_GROUP') }}"
+    FAIL_COMPOSE_CONFIG: "{{ lookup('ansible.builtin.env', 'FAIL_COMPOSE_CONFIG') }}"
+    FAIL_RENDER_COMPOSE: "{{ lookup('ansible.builtin.env', 'FAIL_RENDER_COMPOSE') }}"
+    FAIL_COMPOSE_UP: "{{ lookup('ansible.builtin.env', 'FAIL_COMPOSE_UP') }}"
+    FAIL_CONTAINER_HEALTH: "{{ lookup('ansible.builtin.env', 'FAIL_CONTAINER_HEALTH') }}"
+    RECOVERY_UNHEALTHY_ON_FIRST: "{{ lookup('ansible.builtin.env', 'RECOVERY_UNHEALTHY_ON_FIRST') }}"
+    FAIL_PROFILE_SHOW_WITH_PENDING: "{{ lookup('ansible.builtin.env', 'FAIL_PROFILE_SHOW_WITH_PENDING') }}"
+    OMIT_TELEGRAM_MARKERS: "{{ lookup('ansible.builtin.env', 'OMIT_TELEGRAM_MARKERS') }}"
+    STARTING_HEALTH_CHECKS: "{{ lookup('ansible.builtin.env', 'STARTING_HEALTH_CHECKS') }}"
+  vars:
+    hermes_app_dir: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_APP_DIR') }}"
+    hermes_data_dir: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_DATA_DIR') }}"
+    hermes_app_owner: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_IDENTITY') }}"
+    hermes_app_group: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_GROUP') }}"
+    hermes_runtime_owner: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_IDENTITY') }}"
+    hermes_runtime_group: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_GROUP') }}"
+    hermes_repo_root: "{{ lookup('ansible.builtin.env', 'HERMES_REPO_ROOT') }}"
+    hermes_compose_source_path: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_COMPOSE_SOURCE') }}"
+    hermes_gateway_pending_reconciliation_path: >-
+      {{ lookup('ansible.builtin.env', 'HERMES_FAKE_APP_DIR') }}/telegram-reconciliation.pending
+    hermes_telegram_state: "{{ lookup('ansible.builtin.env', 'HERMES_TELEGRAM_STATE') }}"
+    hermes_telegram_env_source: "{{ lookup('ansible.builtin.env', 'HERMES_TELEGRAM_ENV_SOURCE') }}"
+    hermes_gateway_profile: "{{ lookup('ansible.builtin.env', 'HERMES_GATEWAY_PROFILE') }}"
+    hermes_restart_enabled: false
+    hermes_telegram_health_delay: 0
+    hermes_profiles:
+      - name: manager
+        description: Manager fixture
+      - name: devops
+        description: DevOps fixture
+  tasks:
+    - name: Apply the requested Telegram state
+      ansible.builtin.include_role:
+        name: hermes
+        tasks_from: telegram_gateway
+
+    - name: Repeat the requested Telegram state to prove idempotence
+      ansible.builtin.include_role:
+        name: hermes
+        tasks_from: telegram_gateway
