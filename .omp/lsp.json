@@ -1,0 +1,24 @@
+{
+  "servers": {
+    "terraformls": {
+      "rootMarkers": ["terraform"]
+    },
+    "yamlls": {
+      "settings": {
+        "yaml": {
+          "disableSchemaDetection": [
+            "ansible/**/*.yml",
+            "ansible/**/*.yaml"
+          ]
+        }
+      }
+    },
+    "ansible-language-server": {
+      "command": "ansible-language-server",
+      "args": ["--stdio"],
+      "fileTypes": [".yml", ".yaml"],
+      "languageId": "yaml",
+      "rootMarkers": ["ansible"]
+    }
+  }
+}
