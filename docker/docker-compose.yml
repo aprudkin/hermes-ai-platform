@@ -12,6 +12,8 @@ services:
       HERMES_UID: "${HERMES_UID:-10000}"
       HERMES_GID: "${HERMES_GID:-10000}"
       API_SERVER_ENABLED: "true"
+      HOME: "/opt/data"
+      CODEX_HOME: "/opt/data/.codex"
       API_SERVER_HOST: "127.0.0.1"
       HERMES_TELEGRAM_DISABLE_FALLBACK_IPS: "true"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"

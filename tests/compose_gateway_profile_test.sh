@@ -49,6 +49,10 @@ if not isinstance(environment, dict) or not required_telegram_environment.issubs
     raise SystemExit("gateway Compose service must expose the selected Telegram environment")
 if environment.get("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS") != "true":
     raise SystemExit("gateway Compose service must use direct Telegram DNS for the pinned image")
+if environment.get("HOME") != "/opt/data":
+    raise SystemExit("gateway Compose service must set the Hermes runtime home")
+if environment.get("CODEX_HOME") != "/opt/data/.codex":
+    raise SystemExit("gateway Compose service must set the Codex auth home")
 if any(key.startswith("TELEGRAM_GROUP_") for key in environment):
     raise SystemExit("gateway Compose service must not expose group-wide authorization keys")
 serialized = json.dumps(rendered).lower()
@@ -108,6 +112,10 @@ if not re.search(
     re.MULTILINE,
 ):
     raise SystemExit("gateway Compose service must disable the pinned image fallback-IP transport")
+if not re.search(r'^      HOME:\s*"/opt/data"\s*$', services, re.MULTILINE):
+    raise SystemExit("gateway Compose service must set the Hermes runtime home")
+if not re.search(r'^      CODEX_HOME:\s*"/opt/data/\.codex"\s*$', services, re.MULTILINE):
+    raise SystemExit("gateway Compose service must set the Codex auth home")
 if "TELEGRAM_GROUP_" in services:
     raise SystemExit("gateway Compose service must not expose group-wide authorization keys")
 if re.search(r"webhook|listener", services, re.IGNORECASE):
