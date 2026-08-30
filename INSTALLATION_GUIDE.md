@@ -163,8 +163,8 @@ Codex auth, API credentials, or rollback evidence, and it is never attempted
 automatically after a failure.
 
 The implementation is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/website/docs/user-guide/messaging/telegram.md)
-and [v2026.8.16 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.16).
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/messaging/telegram.md)
+and [v2026.8.27 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.27).
 Changing the image pin requires revalidation against both. Syntax checks,
 Compose rendering, health, and connected log status are not Telegram
 behavioral proof.

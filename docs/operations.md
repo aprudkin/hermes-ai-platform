@@ -28,8 +28,8 @@ profile, recreates only the service, and preserves profiles, sessions, memory,
 provider credentials, Codex auth, API credentials, and rollback evidence.
 
 The contract is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/website/docs/user-guide/messaging/telegram.md)
-and [v2026.8.16 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.16).
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/messaging/telegram.md)
+and [v2026.8.27 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.27).
 Syntax, Compose configuration, container health, and bounded connected-log
 status are deployment evidence only and do not prove user-visible Telegram
 behavior.
@@ -56,27 +56,45 @@ mutation remain separate approval boundaries. Passing local validation or CI
 does not authorize any of them.
 
 Profile reconciliation follows the CLI contract in the pinned Hermes
-`v2026.8.16` source. [`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/hermes_cli/main.py#L10266-L10281)
+[`v2026.8.27` source](https://github.com/NousResearch/hermes-agent/tree/v2026.8.27).
+[`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/hermes_cli/main.py)
 uses exit 1 with `does not exist` for a missing named profile, while
-[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/hermes_cli/config.py#L5429-L5441)
+[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/hermes_cli/config.py)
 uses exit 1 with `Config key not set` for a missing key. The role tolerates
 only those two documented absence results; every other non-zero query result
 fails before create or set operations.
 
 The desired profile matrix also sets `stt.language=ru` for the default profile
-and every named profile. In pinned Hermes `v2026.8.16`, the global
-[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.16/website/docs/user-guide/configuration.md#speech-to-text-stt)
+and every named profile. In pinned Hermes `v2026.8.27`, the global
+[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/configuration.md#speech-to-text-stt)
 value is the language hint for every STT provider unless a provider-specific
 language overrides it; an empty value restores provider auto-detection. This
 setting does not select an STT provider and is separate from the UI language.
 
-Not implemented in Minimal: automated backup/restore, monitoring/alerting,
-image upgrade automation, DNS, TLS, public dashboard/API access, or disaster
-recovery. These remain later-level work and must not be inferred from this
-repository.
+## Hermes image updates
 
-For an authorized deployment, preserve the Terraform plan and validation
-output under `.generated/` until review. After the first successful run, rerun
-the same Ansible playbook and require zero semantic changes before calling the
-host configuration idempotent. Back up `/opt/hermes/data` before any image pin
-change; an upgrade procedure has not yet been implemented or tested.
+`task hermes:update` makes a new, verified archive of the persistent remote
+`/opt/hermes/data` state before it contacts GitHub for the latest stable
+`nousresearch/hermes-agent` release. Archives default to
+`~/backup/hermer`; set `HERMES_BACKUP_DIR` to use another local destination.
+The container is paused only while its archive streams to the controller, then
+unpaused even if archiving fails. The task checks the resulting gzip archive
+and its tar index before proceeding.
+
+The task requires these environment variables: `HERMES_DEPLOY_HOST`,
+`HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
+`HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
+`HERMES_MODEL_PROVIDER`, and `HERMES_MODEL`. Set exactly one credential source:
+`HERMES_CODEX_AUTH` for `openai-codex`, otherwise `HERMES_ENV`. Values remain
+outside the repository. The SSH client uses batch-mode trust on first use: it
+records an unknown host key and rejects any later key change.
+
+If the current pin is already the latest stable release, the task exits after
+the verified backup and neither pushes nor deploys. Otherwise it requires a
+clean worktree, updates only `docker/docker-compose.yml`, and requires
+`CONFIRM_PUSH=yes` immediately before pushing the current branch and
+`CONFIRM_DEPLOY=yes` immediately before the existing-host deployment. The
+installer's own `--confirm-external-mutation` gate remains in force.
+
+Automated restore, monitoring/alerting, DNS, TLS, public dashboard/API access,
+and disaster recovery remain outside Minimal.

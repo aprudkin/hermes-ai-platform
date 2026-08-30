@@ -1,0 +1,7 @@
+version: '3'
+
+tasks:
+  hermes:update:
+    desc: Back up Hermes, pin the latest stable release, push, and deploy
+    cmds:
+      - ./scripts/hermes_upgrade.sh
