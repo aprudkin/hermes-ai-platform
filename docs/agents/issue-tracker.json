@@ -1,0 +1,7 @@
+{
+  "provider": "github",
+  "host": "github.com",
+  "repository": "aprudkin/hermes-ai-platform",
+  "projectLabel": "hermes-ai-platform",
+  "areas": ["infrastructure", "deployment", "validation", "agent-workflow"]
+}
