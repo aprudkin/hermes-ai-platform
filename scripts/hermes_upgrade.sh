@@ -24,6 +24,17 @@ require_file() {
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
+resolve_deploy_host() {
+  if [[ -n "${HERMES_DEPLOY_HOST:-}" ]]; then
+    return
+  fi
+
+  require_command terraform
+  HERMES_DEPLOY_HOST="$(terraform -chdir="$repo_root/terraform" output -raw server_ipv4)" \
+    || fail "failed to resolve HERMES_DEPLOY_HOST from Terraform state"
+  require_var HERMES_DEPLOY_HOST
+}
+
 
 require_backup_configuration() {
   require_var HERMES_DEPLOY_HOST
@@ -173,6 +184,8 @@ main() {
   require_command ssh
   require_command gzip
   require_command tar
+  resolve_deploy_host
+
   require_backup_configuration
   backup_runtime_data
   require_command gh

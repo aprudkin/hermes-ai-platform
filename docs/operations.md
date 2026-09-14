@@ -81,13 +81,15 @@ The container is paused only while its archive streams to the controller, then
 unpaused even if archiving fails. The task checks the resulting gzip archive
 and its tar index before proceeding.
 
-The task requires these environment variables: `HERMES_DEPLOY_HOST`,
-`HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
+The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
 `HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
-`HERMES_MODEL_PROVIDER`, and `HERMES_MODEL`. Set exactly one credential source:
-`HERMES_CODEX_AUTH` for `openai-codex`, otherwise `HERMES_ENV`. Values remain
-outside the repository. The SSH client uses batch-mode trust on first use: it
-records an unknown host key and rejects any later key change.
+`HERMES_MODEL_PROVIDER`, and `HERMES_MODEL`. It resolves an omitted
+`HERMES_DEPLOY_HOST` from the local Terraform state's `server_ipv4` output;
+set that variable to explicitly target a different existing host. Set exactly
+one credential source: `HERMES_CODEX_AUTH` for `openai-codex`, otherwise
+`HERMES_ENV`. Values remain outside the repository. The SSH client uses
+batch-mode trust on first use: it records an unknown host key and rejects any
+later key change.
 
 If the current pin is already the latest stable release, the task exits after
 the verified backup and neither pushes nor deploys. Otherwise it requires a

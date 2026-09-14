@@ -19,6 +19,22 @@ mkdir -p "$fake_bin" "$fixture_repo/scripts" "$fixture_repo/docker" \
   "$fixture_repo/installer" "$remote_root/data"
 cp "$repo_root/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_upgrade.sh"
 cp "$repo_root/docker/docker-compose.yml" "$fixture_repo/docker/docker-compose.yml"
+# Keep the disposable baseline independent of the production image pin.
+python3 - "$fixture_repo/docker/docker-compose.yml" <<'PYTHON'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+content, count = re.subn(
+    r"(?m)^(\s*image:\s*nousresearch/hermes-agent:)[^\s#]+\s*$",
+    r"\g<1>v2026.8.27",
+    path.read_text(),
+)
+if count != 1:
+    raise SystemExit("expected exactly one Hermes image pin in test fixture")
+path.write_text(content)
+PYTHON
 printf 'private fixture key\n' >"$private_key"
 printf 'public fixture key\n' >"$public_key"
 printf 'OPENROUTER_API_KEY=test-only-value\n' >"$provider_env"
@@ -37,6 +53,16 @@ set -euo pipefail
 printf 'gh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 printf '%s\n' "$FAKE_HERMES_TAG"
 FAKE
+
+cat >"$fake_bin/terraform" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'terraform %s\n' "$*" >>"$FAKE_COMMAND_LOG"
+[[ "$*" == *"output -raw server_ipv4"* ]] \
+  || { printf 'unexpected terraform command: %s\n' "$*" >&2; exit 1; }
+printf '%s\n' 203.0.113.44
+FAKE
+
 
 cat >"$fake_bin/git" <<'FAKE'
 #!/usr/bin/env bash
@@ -67,7 +93,7 @@ set -euo pipefail
 printf 'installer %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 FAKE
 
-chmod +x "$fake_bin/ssh" "$fake_bin/gh" "$fake_bin/git" \
+chmod +x "$fake_bin/ssh" "$fake_bin/gh" "$fake_bin/git" "$fake_bin/terraform" \
   "$fixture_repo/scripts/hermes_upgrade.sh" "$fixture_repo/installer/install.sh"
 
 run_upgrade() {
@@ -75,7 +101,7 @@ run_upgrade() {
     FAKE_COMMAND_LOG="$command_log" \
     FAKE_REMOTE_ROOT="$remote_root" \
     HERMES_BACKUP_DIR="$backup_dir" \
-    HERMES_DEPLOY_HOST=203.0.113.44 \
+    HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
     HERMES_DEPLOY_SSH_USER=root \
     HERMES_DEPLOY_SSH_PRIVATE_KEY="$private_key" \
     HERMES_DEPLOY_SSH_PUBLIC_KEY="$public_key" \
@@ -121,6 +147,16 @@ grep -q '^installer deploy existing ' "$command_log" \
 grep -q -- '--confirm-external-mutation' "$command_log" \
   || fail "the update path must preserve the installer's deployment confirmation"
 printf 'PASS update path pins, pushes, and deploys after a verified backup\n'
+
+: >"$command_log"
+FAKE_HERMES_TAG=v2026.9.01 HERMES_DEPLOY_HOST='' run_upgrade \
+  >"$fixture_root/terraform-host.out"
+grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" \
+  || fail "the upgrade must resolve an omitted deployment host from Terraform state"
+grep -q 'root@203.0.113.44' "$command_log" \
+  || fail "the backup must use the Terraform-resolved deployment host"
+printf 'PASS omitted deployment host resolves from Terraform state\n'
+
 
 task --taskfile "$repo_root/Taskfile.yml" --dry hermes:update \
   >"$fixture_root/task-dry-run.out" 2>&1
