@@ -25,7 +25,7 @@
 Минимальный ожидаемый результат:
 
 1. Безопасная структура Git-репозитория: `.gitignore`, конфигурационные примеры без секретов, понятные команды и воспроизводимая валидация.
-2. Рабочий Terraform для Hetzner Cloud, создающий минимальный VPS в Германии, сеть/firewall только при обоснованной необходимости, и outputs для Ansible. Точный location между `fsn1` и `nbg1` оставь явным обязательным параметром — не угадывай город.
+2. Working Terraform for Hetzner Cloud that creates a minimal VPS in the location currently confirmed by the project instructions, adds network/firewall only when justified, and exposes Ansible outputs. Before any Terraform plan or apply, read both current root `AGENTS.md` and `INSTALLATION_GUIDE.md`; use their currently selected location and required inputs, not values from this brief. If either source is missing or unreadable, they conflict, or neither explicitly selects a location, stop and resolve that before any cloud operation.
 3. Отдельный режим existing host, который не создаёт VPS.
 4. Идемпотентный Ansible для поддерживаемой ОС: базовое hardening, Docker, каталоги и запуск Hermes.
 5. Docker Compose с текущим официальным Hermes image, корректной командой запуска, persistent data/config, health check и безопасной передачей конфигурации.
@@ -39,8 +39,7 @@
 
 - Hetzner CLI context: `hermes`;
 - Hetzner project: Hermes;
-- страна: Германия;
-- точный location ещё не выбран;
+- Current deployment location: use only the value currently selected in root `AGENTS.md` and `INSTALLATION_GUIDE.md`; this brief does not select or override it.
 - публичный SSH key: `~/.ssh/luk.pub`;
 - приватный ключ нельзя копировать в репозиторий, cloud API, образ или сервер;
 - реальные секреты нельзя печатать или сохранять в Git.
