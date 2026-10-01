@@ -83,17 +83,8 @@
   loop: "{{ hermes_profiles }}"
   notify: Restart Hermes
 
-- name: Synchronize credentials into every named profile
-  ansible.builtin.copy:
-    src: "{{ hermes_env_source }}"
-    dest: "{{ hermes_data_dir }}/profiles/{{ item.name }}/.env"
-    owner: "{{ hermes_runtime_owner }}"
-    group: "{{ hermes_runtime_group }}"
-    mode: "0600"
-  loop: "{{ hermes_profiles }}"
-  when: hermes_model_provider != "openai-codex"
-  no_log: true
-  notify: Restart Hermes
+- name: Synchronize provider credentials into every profile
+  ansible.builtin.include_tasks: install_profile_credentials.yml
 
 - name: Apply the optional protected Telegram gateway state
   ansible.builtin.include_tasks: telegram_gateway.yml
