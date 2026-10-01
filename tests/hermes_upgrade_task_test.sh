@@ -38,6 +38,7 @@ if count != 1:
     raise SystemExit("expected exactly one Hermes image pin in test fixture")
 path.write_text(content)
 PYTHON
+cp "$fixture_repo/docker/docker-compose.yml" "$fixture_root/compose.baseline.yml"
 printf 'private fixture key\n' >"$private_key"
 printf 'public fixture key\n' >"$public_key"
 printf 'OPENROUTER_API_KEY=test-only-value\n' >"$provider_env"
@@ -80,7 +81,12 @@ case "${1:-}" in
   symbolic-ref)
     printf 'main\n'
     ;;
-  add|commit|push)
+  commit)
+    printf 'git commit' >>"$FAKE_COMMAND_LOG"
+    printf ' <%s>' "$@" >>"$FAKE_COMMAND_LOG"
+    printf '\n' >>"$FAKE_COMMAND_LOG"
+    ;;
+  add|push)
     printf 'git %s\n' "$*" >>"$FAKE_COMMAND_LOG"
     ;;
   *)
@@ -112,6 +118,7 @@ run_upgrade() {
     HERMES_MODEL_PROVIDER=openrouter \
     HERMES_MODEL=test/model \
     HERMES_ENV="$provider_env" \
+    HERMES_ISSUE_NUMBER="${HERMES_ISSUE_NUMBER-}" \
     HERMES_UPGRADE_REVIEW_FILE="${HERMES_UPGRADE_REVIEW_FILE:-}" \
     "$fixture_repo/scripts/hermes_upgrade.sh"
 }
@@ -135,7 +142,8 @@ grep -q 'skipping push and deployment' "$fixture_root/no-update.out" \
 printf 'PASS no-update path backs up before skipping push and deployment\n'
 
 : >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes \
+if FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER=123 \
+  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes \
   run_upgrade >"$fixture_root/unreviewed.out" 2>&1; then
   fail "the update path must reject a release without compatibility evidence"
 fi
@@ -183,7 +191,7 @@ review["tag"] = "v2026.8.27"
 path.write_text(json.dumps(review))
 PYTHON
 : >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 \
+if FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER=123 \
   HERMES_UPGRADE_REVIEW_FILE="$review_file" \
   CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-tag.out" 2>&1; then
   fail "the update path must reject evidence for a different release tag"
@@ -211,7 +219,7 @@ path.write_text(json.dumps(review))
 (root / "README.md").write_text((root / "README.md").read_text() + " ")
 PYTHON
 : >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 \
+if FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER=123 \
   HERMES_UPGRADE_REVIEW_FILE="$review_file" \
   CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-contract.out" 2>&1; then
   fail "the update path must reject evidence for changed project contracts"
@@ -224,7 +232,7 @@ printf 'PASS review evidence must match the inspected project contracts\n'
 cp "$repo_root/README.md" "$fixture_repo/README.md"
 
 : >"$command_log"
-FAKE_HERMES_TAG=v2026.9.01 \
+FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER=123 \
   HERMES_UPGRADE_REVIEW_FILE="$review_file" \
   CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/update.out"
 grep -q 'nousresearch/hermes-agent:v2026.9.01' \
@@ -232,8 +240,9 @@ grep -q 'nousresearch/hermes-agent:v2026.9.01' \
   || fail "the update path must pin the discovered Hermes release"
 grep -q '^git add docker/docker-compose.yml$' "$command_log" \
   || fail "the update path must stage only the image pin"
-grep -q '^git commit -m chore: update Hermes Agent to v2026.9.01$' "$command_log" \
-  || fail "the update path must create a release-specific commit"
+grep -Fqx 'git commit <commit> <-m> <chore: update Hermes Agent to v2026.9.01> <-m> <Refs: #123>' \
+  "$command_log" \
+  || fail "the update commit must use the required conventional header and issue-reference footer"
 grep -q '^git push origin main$' "$command_log" \
   || fail "the update path must push the current branch"
 grep -q '^installer deploy existing ' "$command_log" \
@@ -241,6 +250,32 @@ grep -q '^installer deploy existing ' "$command_log" \
 grep -q -- '--confirm-external-mutation' "$command_log" \
   || fail "the update path must preserve the installer's deployment confirmation"
 printf 'PASS update path pins, pushes, and deploys after a verified backup\n'
+cp "$fixture_repo/docker/docker-compose.yml" "$fixture_root/compose.updated.yml"
+cp "$fixture_root/compose.baseline.yml" "$fixture_repo/docker/docker-compose.yml"
+
+: >"$command_log"
+if FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER='' run_upgrade \
+  >"$fixture_root/missing-issue.out" 2>&1; then
+  fail "the update path must reject a missing task issue number"
+fi
+grep -q 'HERMES_ISSUE_NUMBER must be a positive decimal issue number' \
+  "$fixture_root/missing-issue.out" \
+  || fail "a missing issue number must report the validation failure"
+! grep -Eq '^(git (add|commit|push)|installer )' "$command_log" \
+  || fail "the update path must reject a missing issue number before external mutation"
+
+: >"$command_log"
+if FAKE_HERMES_TAG=v2026.9.01 HERMES_ISSUE_NUMBER=issue-123 run_upgrade \
+  >"$fixture_root/invalid-issue.out" 2>&1; then
+  fail "the update path must reject a malformed task issue number"
+fi
+grep -q 'HERMES_ISSUE_NUMBER must be a positive decimal issue number' \
+  "$fixture_root/invalid-issue.out" \
+  || fail "a malformed issue number must report the validation failure"
+! grep -Eq '^(git (add|commit|push)|installer )' "$command_log" \
+  || fail "the update path must reject a malformed issue number before external mutation"
+printf 'PASS update path rejects missing and malformed issue references\n'
+cp "$fixture_root/compose.updated.yml" "$fixture_repo/docker/docker-compose.yml"
 
 : >"$command_log"
 FAKE_HERMES_TAG=v2026.9.01 HERMES_DEPLOY_HOST='' run_upgrade \

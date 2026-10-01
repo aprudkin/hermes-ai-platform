@@ -188,6 +188,11 @@ path.write_text(content.replace(current_image, latest_image))
 PYTHON
 }
 
+require_issue_number() {
+  [[ "${HERMES_ISSUE_NUMBER:-}" =~ ^[1-9][0-9]*$ ]] \
+    || fail "HERMES_ISSUE_NUMBER must be a positive decimal issue number"
+}
+
 require_deploy_configuration() {
   require_var HERMES_DEPLOY_SSH_SOURCE_CIDR
   require_file HERMES_DEPLOY_SSH_PUBLIC_KEY
@@ -214,7 +219,9 @@ push_update() {
   branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD)" \
     || fail "refusing to push from a detached HEAD"
   git -C "$repo_root" add docker/docker-compose.yml
-  git -C "$repo_root" commit -m "chore: update Hermes Agent to $latest_tag"
+  git -C "$repo_root" commit \
+    -m "chore: update Hermes Agent to $latest_tag" \
+    -m "Refs: #$HERMES_ISSUE_NUMBER"
   git -C "$repo_root" push origin "$branch"
 }
 
@@ -263,6 +270,7 @@ main() {
     return
   fi
 
+  require_issue_number
   verify_compatibility_review "$latest_tag"
   assert_clean_worktree
   require_deploy_configuration

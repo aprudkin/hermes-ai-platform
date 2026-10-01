@@ -87,7 +87,10 @@ The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
 `HERMES_DEPLOY_HOST` from the local Terraform state's `server_ipv4` output;
 set that variable to explicitly target a different existing host. Set exactly
 one credential source: `HERMES_CODEX_AUTH` for `openai-codex`, otherwise
-`HERMES_ENV`. Values remain outside the repository. The SSH client uses
+`HERMES_ENV`. Values remain outside the repository. When a newer release will
+be committed, also set `HERMES_ISSUE_NUMBER` to the positive decimal issue
+number; the generated commit records it as `Refs: #<number>`. The already-current
+no-op path does not require this variable. The SSH client uses
 batch-mode trust on first use: it records an unknown host key and rejects any
 later key change.
 
