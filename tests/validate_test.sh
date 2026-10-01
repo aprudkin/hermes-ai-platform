@@ -194,6 +194,40 @@ grep -Fq 'profile=manager args=compose' "$compose_log" \
 
 printf 'PASS strict static gate covers targeted playbooks and both Compose profiles\n'
 
+rg_error_bin="$fixture_root/rg-error-bin"
+mkdir -p "$rg_error_bin"
+cat >"$rg_error_bin/rg" <<'FAKE'
+#!/usr/bin/env bash
+exit 2
+FAKE
+chmod +x "$rg_error_bin/rg"
+set +e
+output="$(cd "$fixture_root/repo" && PATH="$rg_error_bin:$PATH" bash scripts/validate.sh --secrets 2>&1)"
+status=$?
+set -e
+
+[[ "$status" -ne 0 ]] || fail "secret validation must fail when rg exits with a scan error"
+[[ "$output" == *"secret scan failed"* ]] \
+  || fail "secret validation must identify a scanner execution failure"
+printf 'PASS validate rejects secret scanner errors\n'
+
+rg_no_match_bin="$fixture_root/rg-no-match-bin"
+mkdir -p "$rg_no_match_bin"
+cat >"$rg_no_match_bin/rg" <<'FAKE'
+#!/usr/bin/env bash
+exit 1
+FAKE
+chmod +x "$rg_no_match_bin/rg"
+set +e
+output="$(cd "$fixture_root/repo" && PATH="$rg_no_match_bin:$PATH" bash scripts/validate.sh --secrets 2>&1)"
+status=$?
+set -e
+
+[[ "$status" -eq 0 ]] || fail "secret validation must accept rg status 1 when no matches are found"
+[[ "$output" == *"PASS repository secret-pattern scan"* ]] \
+  || fail "secret validation must report success for an rg no-match result"
+printf 'PASS validate accepts no-match scanner status\n'
+
 set +e
 output="$(cd "$fixture_root/repo" && bash scripts/validate.sh --secrets 2>&1)"
 status=$?

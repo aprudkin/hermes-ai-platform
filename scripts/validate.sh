@@ -157,11 +157,22 @@ validate_compose() {
 
 validate_secrets() {
   local secret_pattern
+  local secret_scan_output
+  local secret_scan_status
   command -v rg >/dev/null 2>&1 \
     || { error "repository secret scan requires ripgrep (rg)"; return 1; }
   secret_pattern='-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----|^[[:space:]]*(HCLOUD_TOKEN|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|GITHUB_TOKEN|GH_TOKEN)=[^[:space:]#].*|gh[pousr]_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}'
-  if rg --line-number --hidden --glob '!.git/**' --glob '!terraform/.terraform/**' \
-    --glob '!.generated/**' -- "$secret_pattern" "$repo_root" \
+  if secret_scan_output="$(rg --line-number --hidden --glob '!.git/**' --glob '!terraform/.terraform/**' \
+    --glob '!.generated/**' -- "$secret_pattern" "$repo_root" 2>/dev/null)"; then
+    secret_scan_status=0
+  else
+    secret_scan_status=$?
+  fi
+  if [[ "$secret_scan_status" -gt 1 ]]; then
+    error "repository secret scan failed (rg exited with status $secret_scan_status)"
+    return 1
+  fi
+  if [[ "$secret_scan_status" -eq 0 ]] && printf '%s\n' "$secret_scan_output" \
     | awk \
       -v allowed_path="$repo_root/tests/ansible_telegram_gateway_test.sh:" \
       -v allowed_assignment='TELEGRAM_BOT_TOKEN=24681012:fixture_secret_abcdefghijklmnop' '
