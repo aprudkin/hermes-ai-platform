@@ -120,7 +120,7 @@ if [[ "${1:-}" == "--profile" && "${3:-}" == "gateway" && "${4:-}" == "start" &&
 fi
 
 if [[ "${1:-}" == "profile" && "${2:-}" == "show" ]]; then
-  [[ "${3:-}" == "manager" || "${3:-}" == "devops" ]] || exit 98
+  [[ "${3:-}" == "default" || "${3:-}" == "manager" || "${3:-}" == "devops" ]] || exit 98
   if [[ "${FAIL_PROFILE_SHOW_WITH_PENDING:-0}" == "1" && -e "$HERMES_FAKE_APP_DIR/telegram-reconciliation.pending" ]]; then
     exit 102
   fi
@@ -451,6 +451,115 @@ run_round2_structure_controls() {
   assert_round2_invalid_structure disabled export-assignment-disable
   printf 'PASS whitespace export Telegram assignment fails disable before mutation\n'
 }
+
+run_full_redeploy_guard_control() {
+  local output_path="$fixture_root/full-redeploy.out"
+  reset_fixture
+  run_gateway "$fixture_root/full-redeploy-enable.out" enabled "$telegram_source" manager \
+    || fail "fixture Telegram enable must succeed before full redeploy"
+  cp "$data_dir/profiles/manager/.env" "$fixture_root/managed.before"
+  cp "$app_dir/gateway.env" "$fixture_root/gateway.before"
+  [[ "$(count_command "exec --user $test_identity:$test_group --env HOME=/opt/data --env CODEX_HOME=/opt/data/.codex hermes hermes --profile manager gateway start")" -eq 1 ]] \
+    || fail "fixture must start the manager gateway before redeploy"
+  : >"$command_log"
+
+  if env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$output_path" 2>&1; then
+    fail "ordinary redeploy must refuse retained enabled Telegram state"
+  fi
+  cmp -s "$fixture_root/managed.before" "$data_dir/profiles/manager/.env" \
+    || fail "rejected redeploy must preserve the managed Telegram profile"
+  cmp -s "$fixture_root/gateway.before" "$app_dir/gateway.env" \
+    || fail "rejected redeploy must preserve the active manager gateway"
+  [[ ! -s "$command_log" ]] || fail "rejected redeploy must not contact Docker"
+  assert_no_protected_output "$output_path"
+
+  cp "$app_dir/gateway-profile.pre-telegram" "$fixture_root/pre-telegram.before"
+  cp "$app_dir/gateway-profile.telegram-managed" "$fixture_root/managed-profile.before"
+  rm "$app_dir/gateway-profile.pre-telegram" "$app_dir/gateway-profile.telegram-managed"
+  : >"$command_log"
+  if env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$fixture_root/missing-metadata.out" 2>&1; then
+    fail "ordinary redeploy must refuse a managed Telegram block without metadata"
+  fi
+  cmp -s "$fixture_root/managed.before" "$data_dir/profiles/manager/.env" \
+    || fail "missing metadata must not erase the managed Telegram block"
+  cmp -s "$fixture_root/gateway.before" "$app_dir/gateway.env" \
+    || fail "missing metadata must not change the selected gateway"
+  [[ ! -s "$command_log" ]] || fail "missing metadata must fail before Docker"
+  assert_no_protected_output "$fixture_root/missing-metadata.out"
+  cp "$fixture_root/pre-telegram.before" "$app_dir/gateway-profile.pre-telegram"
+  cp "$fixture_root/managed-profile.before" "$app_dir/gateway-profile.telegram-managed"
+
+  run_gateway "$fixture_root/full-redeploy-disable.out" disabled '' '' \
+    || fail "explicit Telegram disable must still work"
+  : >"$command_log"
+  if ! env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$fixture_root/disabled-redeploy.out" 2>&1; then
+    fail "ordinary redeploy after completed Telegram disable must be allowed"
+  fi
+  cmp -s <(printf 'PROVIDER_KEY=replaced-without-telegram\n') \
+    "$data_dir/profiles/manager/.env" \
+    || fail "disabled redeploy must synchronize provider-only credentials"
+  cmp -s <(printf 'HERMES_GATEWAY_PROFILE=default\n') "$app_dir/gateway.env" \
+    || fail "disabled redeploy must keep the non-Telegram gateway"
+
+  reset_fixture
+  if ! env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$fixture_root/fresh-redeploy.out" 2>&1; then
+    fail "ordinary deploy without Telegram state must remain allowed"
+  fi
+  reset_fixture
+  mkdir -p "$data_dir/profiles/default"
+  run_gateway "$fixture_root/default-enable.out" enabled "$telegram_source" default \
+    || fail "fixture Telegram enable on default must succeed"
+  cp "$data_dir/profiles/default/.env" "$fixture_root/default-managed.before"
+  rm "$app_dir/gateway-profile.pre-telegram" "$app_dir/gateway-profile.telegram-managed"
+  : >"$command_log"
+  if env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$fixture_root/default-missing-metadata.out" 2>&1; then
+    fail "ordinary redeploy must refuse default Telegram without metadata"
+  fi
+  cmp -s "$fixture_root/default-managed.before" "$data_dir/profiles/default/.env" \
+    || fail "missing metadata must preserve default Telegram settings"
+  [[ ! -s "$command_log" ]] || fail "default missing metadata must fail before Docker"
+  assert_no_protected_output "$fixture_root/default-missing-metadata.out"
+
+  reset_fixture
+  printf 'pending\n' >"$app_dir/telegram-reconciliation.pending"
+  chmod 600 "$app_dir/telegram-reconciliation.pending"
+  cp "$data_dir/profiles/manager/.env" "$fixture_root/pending.before"
+  if env ANSIBLE_ROLES_PATH="$repo_root/ansible/roles" \
+    HERMES_FAKE_APP_DIR="$app_dir" HERMES_FAKE_DATA_DIR="$data_dir" \
+    "${ansible_command[@]}" --inventory localhost, \
+      "$repo_root/tests/fixtures/telegram_full_redeploy.yml" \
+      --tags redeploy_preflight >"$fixture_root/pending-redeploy.out" 2>&1; then
+    fail "an interrupted Telegram transition must block ordinary redeploy"
+  fi
+  cmp -s "$fixture_root/pending.before" "$data_dir/profiles/manager/.env" \
+    || fail "pending transition must preserve existing profile credentials"
+  printf 'PASS enabled, orphaned manager/default, and pending Telegram block redeploy; disabled/fresh permit it\n'
+}
+
+if [[ "${HERMES_TEST_CASE:-}" == "redeploy-guard" ]]; then
+  run_full_redeploy_guard_control
+  exit 0
+fi
 
 if [[ "${HERMES_TEST_CASE:-}" == "starting-health" ]]; then
   run_starting_health_control
@@ -865,5 +974,6 @@ printf 'PASS selected profile environment creation is protected and functional\n
 
 run_starting_health_control
 run_round2_structure_controls
+run_full_redeploy_guard_control
 
 printf 'PASS Ansible Telegram gateway behavior suite\n'

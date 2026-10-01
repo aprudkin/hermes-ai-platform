@@ -30,6 +30,7 @@ require_artifacts() {
     ansible/requirements.yml
     ansible/roles/hermes/tasks/validate_telegram.yml
     ansible/roles/hermes/tasks/telegram_gateway.yml
+    ansible/roles/hermes/tasks/preflight_telegram_redeploy.yml
     docker/docker-compose.yml
     .github/workflows/validate.yml
     installer/install.sh
@@ -42,6 +43,7 @@ require_artifacts() {
     tests/telegram_env_test.sh
     tests/compose_gateway_profile_test.sh
     tests/fixtures/telegram_gateway.yml
+    tests/fixtures/telegram_full_redeploy.yml
     tests/ansible_telegram_gateway_test.sh
     tests/ansible_telegram_verify_test.sh
     tests/validate_runtime_test.sh

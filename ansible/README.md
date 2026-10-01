@@ -48,6 +48,13 @@ profile, and retains the rollback and managed-profile evidence. It never
 deletes profiles, sessions, memory, provider credentials, Codex auth, or API
 credentials, and failure handling never performs automatic disable or cleanup.
 
+An ordinary full deployment without Telegram inputs refuses to overwrite an
+existing enabled or pending Telegram configuration. To redeploy while Telegram
+is enabled, supply the protected `--telegram-env` and `--gateway-profile`
+inputs again (which select explicit enable reconciliation), or explicitly
+complete a targeted disable before the ordinary deployment. The refusal occurs
+before Hermes role mutation; it does not disable or restart the gateway.
+
 Telegram privacy mode and minimum-permission group administration are operator
 controls outside Ansible. Commands, replies, and direct mentions are the only
 configured group triggers. Host connection, credential installation, service

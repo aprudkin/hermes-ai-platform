@@ -1,4 +1,12 @@
 ---
+- name: Refuse ordinary redeploy over retained enabled Telegram state
+  ansible.builtin.include_tasks:
+    file: preflight_telegram_redeploy.yml
+    apply:
+      tags: redeploy_preflight
+  when: hermes_telegram_state | default('') != 'enabled'
+  tags: redeploy_preflight
+
 - name: Create Hermes directories with separate ownership boundaries
   ansible.builtin.include_tasks: create_directories.yml
 

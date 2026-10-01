@@ -1,0 +1,170 @@
+---
+- name: Inspect retained Telegram state before full-deploy mutation
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ hermes_gateway_pending_reconciliation_path }}"
+    - "{{ hermes_gateway_profile_backup_path }}"
+    - "{{ hermes_gateway_managed_profile_path }}"
+  register: hermes_redeploy_telegram_state
+  changed_when: false
+  no_log: true
+
+- name: Refuse an incomplete or pending Telegram transition without explicit inputs
+  ansible.builtin.assert:
+    that:
+      - not hermes_redeploy_telegram_state.results[0].stat.exists
+      - >-
+        hermes_redeploy_telegram_state.results[1].stat.exists ==
+        hermes_redeploy_telegram_state.results[2].stat.exists
+      - >-
+        not hermes_redeploy_telegram_state.results[1].stat.exists or
+        (hermes_redeploy_telegram_state.results[1].stat.isreg and
+         not hermes_redeploy_telegram_state.results[1].stat.islnk and
+         hermes_redeploy_telegram_state.results[1].stat.mode == '0600' and
+         hermes_redeploy_telegram_state.results[2].stat.isreg and
+         not hermes_redeploy_telegram_state.results[2].stat.islnk and
+         hermes_redeploy_telegram_state.results[2].stat.mode == '0600')
+    fail_msg: >-
+      Retained Telegram state requires explicit protected Telegram enable
+      reconciliation before an ordinary full deployment can proceed.
+  changed_when: false
+  no_log: true
+
+- name: Read retained Telegram profile names
+  ansible.builtin.slurp:
+    src: "{{ item.item }}"
+  loop: "{{ hermes_redeploy_telegram_state.results[1:] }}"
+  when: item.stat.exists
+  register: hermes_redeploy_profile_state
+  changed_when: false
+  no_log: true
+
+- name: Decode retained Telegram profile names
+  ansible.builtin.set_fact:
+    hermes_redeploy_previous_profile_raw: >-
+      {{ hermes_redeploy_profile_state.results[0].content | b64decode }}
+    hermes_redeploy_managed_profile_raw: >-
+      {{ hermes_redeploy_profile_state.results[1].content | b64decode }}
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  no_log: true
+
+- name: Validate retained Telegram profile names before reading profile data
+  ansible.builtin.assert:
+    that:
+      - >-
+        hermes_redeploy_previous_profile_raw is
+        match('^[A-Za-z0-9][A-Za-z0-9_-]*\n$')
+      - >-
+        hermes_redeploy_managed_profile_raw is
+        match('^[A-Za-z0-9][A-Za-z0-9_-]*\n$')
+      - hermes_redeploy_previous_profile_raw | trim in hermes_profile_names
+      - hermes_redeploy_managed_profile_raw | trim in hermes_profile_names
+    fail_msg: Retained Telegram profiles are invalid or cannot be distinguished.
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true
+
+- name: Inspect named profiles when Telegram metadata is absent
+  ansible.builtin.stat:
+    path: "{{ hermes_data_dir }}/profiles/{{ item }}/.env"
+    follow: false
+  loop: "{{ hermes_profile_names }}"
+  register: hermes_redeploy_untracked_profile_stats
+  when: not hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true
+
+- name: Require protected profile environments before checking for orphaned Telegram settings
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or
+        (item.stat.isreg and not item.stat.islnk and item.stat.mode == '0600')
+    fail_msg: Profile environment is unavailable or malformed.
+  loop: "{{ hermes_redeploy_untracked_profile_stats.results }}"
+  when: not hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true
+
+- name: Read existing profile environments without Telegram metadata
+  ansible.builtin.slurp:
+    src: "{{ hermes_data_dir }}/profiles/{{ item.item }}/.env"
+  loop: "{{ hermes_redeploy_untracked_profile_stats.results }}"
+  when:
+    - not hermes_redeploy_telegram_state.results[1].stat.exists
+    - item.stat.exists
+  register: hermes_redeploy_untracked_profile_contents
+  changed_when: false
+  no_log: true
+
+- name: Refuse orphaned Telegram settings before replacing provider credentials
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.content | b64decode) is not
+        regex('(?m)^# (?:BEGIN|END) HERMES MANAGED TELEGRAM(?:\s|$)')
+      - >-
+        (item.content | b64decode) is not
+        regex('(?m)^[ \t]*(?:export[ \t]+)?TELEGRAM_[A-Z][A-Z0-9_]*[ \t]*=')
+    fail_msg: Telegram settings remain without metadata; reconcile explicitly.
+  loop: "{{ hermes_redeploy_untracked_profile_contents.results }}"
+  when:
+    - not hermes_redeploy_telegram_state.results[1].stat.exists
+    - item.content is defined
+  changed_when: false
+  no_log: true
+
+- name: Inspect retained gateway and managed profile environment
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ hermes_gateway_runtime_env_path }}"
+    - >-
+      {{ hermes_data_dir }}/profiles/{{ hermes_redeploy_managed_profile_raw | trim }}/.env
+  register: hermes_redeploy_env_state
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true
+
+- name: Require protected regular environment files for retained Telegram state
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - not item.stat.islnk
+      - item.stat.mode == '0600'
+    fail_msg: Retained Telegram environments are unavailable or malformed.
+  loop: "{{ hermes_redeploy_env_state.results }}"
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true
+
+- name: Read retained gateway and managed profile environments
+  ansible.builtin.slurp:
+    src: "{{ item.item }}"
+  loop: "{{ hermes_redeploy_env_state.results }}"
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  register: hermes_redeploy_env_contents
+  changed_when: false
+  no_log: true
+
+- name: Permit ordinary redeploy only after Telegram was explicitly disabled
+  ansible.builtin.assert:
+    that:
+      - >-
+        (hermes_redeploy_env_contents.results[0].content | b64decode) ==
+        'HERMES_GATEWAY_PROFILE=' ~ (hermes_redeploy_previous_profile_raw | trim) ~ '\n'
+      - >-
+        (hermes_redeploy_env_contents.results[1].content | b64decode) is not
+        regex('(?m)^# (?:BEGIN|END) HERMES MANAGED TELEGRAM(?:\s|$)')
+      - >-
+        (hermes_redeploy_env_contents.results[1].content | b64decode) is not
+        regex('(?m)^[ \t]*(?:export[ \t]+)?TELEGRAM_[A-Z][A-Z0-9_]*[ \t]*=')
+    fail_msg: >-
+      Telegram is still enabled or its state is inconsistent; use explicit
+      protected Telegram enable reconciliation before a full deployment.
+  when: hermes_redeploy_telegram_state.results[1].stat.exists
+  changed_when: false
+  no_log: true

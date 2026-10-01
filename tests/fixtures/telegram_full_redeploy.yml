@@ -1,0 +1,34 @@
+---
+- name: Exercise the full-deploy Telegram preflight before credential synchronization
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    hermes_app_dir: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_APP_DIR') }}"
+    hermes_data_dir: "{{ lookup('ansible.builtin.env', 'HERMES_FAKE_DATA_DIR') }}"
+    hermes_telegram_state: ""
+    hermes_profiles:
+      - name: manager
+        description: Manager fixture
+      - name: devops
+        description: DevOps fixture
+  tasks:
+    - name: Enter the real full-deploy role with only its preflight tag selected
+      ansible.builtin.include_role:
+        name: hermes
+      tags: always
+
+    - name: Simulate the subsequent provider-only profile synchronization
+      ansible.builtin.copy:
+        content: "PROVIDER_KEY=replaced-without-telegram\n"
+        dest: "{{ hermes_data_dir }}/profiles/manager/.env"
+        mode: "0600"
+      tags: redeploy_preflight
+
+    - name: Simulate the subsequent gateway runtime selection
+      ansible.builtin.copy:
+        content: "HERMES_GATEWAY_PROFILE=default\n"
+        dest: "{{ hermes_app_dir }}/gateway.env"
+        mode: "0600"
+      tags: redeploy_preflight
