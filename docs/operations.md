@@ -93,10 +93,25 @@ later key change.
 
 If the current pin is already the latest stable release, the task exits after
 the verified backup and neither pushes nor deploys. Otherwise it requires a
-clean worktree, updates only `docker/docker-compose.yml`, and requires
-`CONFIRM_PUSH=yes` immediately before pushing the current branch and
-`CONFIRM_DEPLOY=yes` immediately before the existing-host deployment. The
-installer's own `--confirm-external-mutation` gate remains in force.
+compatibility review JSON file named by `HERMES_UPGRADE_REVIEW_FILE` before it
+can change the pin. Review the exact upstream release notes, current image-related
+project contracts, and run `./installer/install.sh validate` first. The JSON
+must use the JSON keys `tag`, `release_notes_url`, `compatibility`, `summary`,
+`contracts` (path-to-SHA-256 map), and `checks` (command/result records). It must
+record the exact release tag and official release-notes URL, a non-empty
+compatibility summary, `compatibility: "compatible"`, SHA-256 hashes for exactly
+`README.md`, `docs/operations.md`, and `docker/docker-compose.yml`, and a passed
+`./installer/install.sh validate` check. Contract hashes bind the review to the
+local content that was inspected; the gate rejects missing, stale, mismatched,
+or incompatible evidence. Keep the review file outside the repository so it does
+not make the clean-worktree check fail. The review remains an operator
+attestation; the script cannot independently judge release compatibility.
+
+After the review passes, the task requires a clean worktree, updates only
+`docker/docker-compose.yml`, and requires `CONFIRM_PUSH=yes` immediately before
+pushing the current branch and `CONFIRM_DEPLOY=yes` immediately before the
+existing-host deployment. The installer's own `--confirm-external-mutation` gate
+remains in force.
 
 Automated restore, monitoring/alerting, DNS, TLS, public dashboard/API access,
 and disaster recovery remain outside Minimal.

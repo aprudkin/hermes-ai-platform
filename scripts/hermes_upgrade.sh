@@ -100,6 +100,69 @@ read_latest_tag() {
   printf '%s\n' "$latest_tag"
 }
 
+verify_compatibility_review() {
+  local latest_tag="$1"
+  local review_file="${HERMES_UPGRADE_REVIEW_FILE:-}"
+
+  [[ -n "$review_file" && -f "$review_file" ]] \
+    || fail "HERMES_UPGRADE_REVIEW_FILE must name a compatibility review JSON file"
+
+  python3 - "$review_file" "$repo_root" "$latest_tag" <<'PYTHON' \
+    || fail "compatibility review evidence is invalid or incomplete"
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+review_path = Path(sys.argv[1])
+root = Path(sys.argv[2])
+tag = sys.argv[3]
+required_contracts = (
+    "README.md",
+    "docs/operations.md",
+    "docker/docker-compose.yml",
+)
+try:
+    review = json.loads(review_path.read_text())
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if not isinstance(review, dict):
+    raise SystemExit(1)
+if review.get("tag") != tag:
+    raise SystemExit(1)
+if review.get("release_notes_url") != (
+    f"https://github.com/NousResearch/hermes-agent/releases/tag/{tag}"
+):
+    raise SystemExit(1)
+if review.get("compatibility") != "compatible":
+    raise SystemExit(1)
+if not isinstance(review.get("summary"), str) or not review["summary"].strip():
+    raise SystemExit(1)
+
+contracts = review.get("contracts")
+if not isinstance(contracts, dict) or set(contracts) != set(required_contracts):
+    raise SystemExit(1)
+for relative_path in required_contracts:
+    expected = contracts[relative_path]
+    if not isinstance(expected, str) or len(expected) != 64:
+        raise SystemExit(1)
+    actual = hashlib.sha256((root / relative_path).read_bytes()).hexdigest()
+    if expected != actual:
+        raise SystemExit(1)
+
+checks = review.get("checks")
+if not isinstance(checks, list) or not any(
+    isinstance(check, dict)
+    and check.get("command") == "./installer/install.sh validate"
+    and check.get("result") == "passed"
+    for check in checks
+):
+    raise SystemExit(1)
+PYTHON
+  printf 'Compatibility review verified for %s.\n' "$latest_tag"
+}
+
 assert_clean_worktree() {
   [[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ]] \
     || fail "working tree is not clean; refusing to mix the Hermes image update with unrelated changes"
@@ -200,6 +263,7 @@ main() {
     return
   fi
 
+  verify_compatibility_review "$latest_tag"
   assert_clean_worktree
   require_deploy_configuration
   update_image_pin "$current_tag" "$latest_tag"

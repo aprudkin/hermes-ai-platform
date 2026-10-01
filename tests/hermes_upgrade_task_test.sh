@@ -14,11 +14,14 @@ backup_dir="$fixture_root/backups"
 private_key="$fixture_root/luk"
 public_key="$fixture_root/luk.pub"
 provider_env="$fixture_root/hermes.env"
+review_file="$fixture_root/compatibility-review.json"
 
 mkdir -p "$fake_bin" "$fixture_repo/scripts" "$fixture_repo/docker" \
-  "$fixture_repo/installer" "$remote_root/data"
+  "$fixture_repo/docs" "$fixture_repo/installer" "$remote_root/data"
 cp "$repo_root/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_upgrade.sh"
 cp "$repo_root/docker/docker-compose.yml" "$fixture_repo/docker/docker-compose.yml"
+cp "$repo_root/README.md" "$fixture_repo/README.md"
+cp "$repo_root/docs/operations.md" "$fixture_repo/docs/operations.md"
 # Keep the disposable baseline independent of the production image pin.
 python3 - "$fixture_repo/docker/docker-compose.yml" <<'PYTHON'
 from pathlib import Path
@@ -109,6 +112,7 @@ run_upgrade() {
     HERMES_MODEL_PROVIDER=openrouter \
     HERMES_MODEL=test/model \
     HERMES_ENV="$provider_env" \
+    HERMES_UPGRADE_REVIEW_FILE="${HERMES_UPGRADE_REVIEW_FILE:-}" \
     "$fixture_repo/scripts/hermes_upgrade.sh"
 }
 
@@ -131,8 +135,98 @@ grep -q 'skipping push and deployment' "$fixture_root/no-update.out" \
 printf 'PASS no-update path backs up before skipping push and deployment\n'
 
 : >"$command_log"
-FAKE_HERMES_TAG=v2026.9.01 CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade \
-  >"$fixture_root/update.out"
+if FAKE_HERMES_TAG=v2026.9.01 CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes \
+  run_upgrade >"$fixture_root/unreviewed.out" 2>&1; then
+  fail "the update path must reject a release without compatibility evidence"
+fi
+! grep -q '^git ' "$command_log" \
+  || fail "an unreviewed release must not be staged, committed, or pushed"
+! grep -q '^installer ' "$command_log" \
+  || fail "an unreviewed release must not be deployed"
+grep -q 'HERMES_UPGRADE_REVIEW_FILE' "$fixture_root/unreviewed.out" \
+  || fail "the refusal must explain the missing review evidence"
+printf 'PASS changed release refuses to proceed without compatibility evidence\n'
+
+python3 - "$review_file" "$fixture_repo" <<'PYTHON'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+review_path = Path(sys.argv[1])
+root = Path(sys.argv[2])
+contracts = ["README.md", "docs/operations.md", "docker/docker-compose.yml"]
+review = {
+    "tag": "v2026.9.01",
+    "release_notes_url": "https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.01",
+    "compatibility": "compatible",
+    "summary": "Reviewed release notes and current image-dependent project contracts.",
+    "contracts": {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+        for name in contracts
+    },
+    "checks": [
+        {"command": "./installer/install.sh validate", "result": "passed"}
+    ],
+}
+review_path.write_text(json.dumps(review))
+PYTHON
+
+python3 - "$review_file" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+review = json.loads(path.read_text())
+review["tag"] = "v2026.8.27"
+path.write_text(json.dumps(review))
+PYTHON
+: >"$command_log"
+if FAKE_HERMES_TAG=v2026.9.01 \
+  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
+  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-tag.out" 2>&1; then
+  fail "the update path must reject evidence for a different release tag"
+fi
+! grep -q '^git ' "$command_log" \
+  || fail "evidence for a different release tag must not reach Git mutations"
+! grep -q '^installer ' "$command_log" \
+  || fail "evidence for a different release tag must not reach deployment"
+printf 'PASS review evidence must match the exact release tag\n'
+
+python3 - "$review_file" "$fixture_repo" <<'PYTHON'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+root = Path(sys.argv[2])
+review = json.loads(path.read_text())
+review["tag"] = "v2026.9.01"
+review["contracts"]["README.md"] = hashlib.sha256(
+    (root / "README.md").read_bytes()
+).hexdigest()
+path.write_text(json.dumps(review))
+(root / "README.md").write_text((root / "README.md").read_text() + " ")
+PYTHON
+: >"$command_log"
+if FAKE_HERMES_TAG=v2026.9.01 \
+  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
+  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-contract.out" 2>&1; then
+  fail "the update path must reject evidence for changed project contracts"
+fi
+! grep -q '^git ' "$command_log" \
+  || fail "stale contract evidence must not reach Git mutations"
+! grep -q '^installer ' "$command_log" \
+  || fail "stale contract evidence must not reach deployment"
+printf 'PASS review evidence must match the inspected project contracts\n'
+cp "$repo_root/README.md" "$fixture_repo/README.md"
+
+: >"$command_log"
+FAKE_HERMES_TAG=v2026.9.01 \
+  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
+  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/update.out"
 grep -q 'nousresearch/hermes-agent:v2026.9.01' \
   "$fixture_repo/docker/docker-compose.yml" \
   || fail "the update path must pin the discovered Hermes release"
