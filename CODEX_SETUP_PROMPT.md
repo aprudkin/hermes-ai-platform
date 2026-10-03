@@ -514,7 +514,9 @@ locale при необходимости
 
 Только после этого:
 
-PermitRootLogin no либо prohibit-password — выбери безопасный вариант с учётом bootstrap workflow;
+Before choosing the SSH directives, read the current root `AGENTS.md`, `ansible/README.md`, and `ansible/roles/base` SSH tasks; this historical template never overrides them. Do not set `PermitRootLogin no`: keep `prohibit-password` so project-required key-only root access remains available. Preserve the dashboard-only exception exactly as implemented: the root authorized key remains restricted, with forwarding limited to local TCP and `127.0.0.1:9119` (`AllowTcpForwarding local`, `PermitOpen 127.0.0.1:9119`, and the matching `permitopen` key option). Do not enable remote forwarding or other destinations. If the current instructions, role, or target host conflict, stop before changing SSH and report the discrepancy.
+
+PermitRootLogin prohibit-password;
 
 PasswordAuthentication no;
 
