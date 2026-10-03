@@ -39,7 +39,7 @@ match the local public key.
 ## 2B. Plan an existing host
 
 ```bash
-./installer/install.sh plan existing --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key ~/.ssh/luk --ssh-source-cidr 203.0.113.10/32
+./installer/install.sh plan existing --host 192.0.2.44 --ssh-user ubuntu --ssh-public-key ~/.ssh/luk.pub --ssh-private-key ~/.ssh/luk --ssh-source-cidr 203.0.113.10/32
 ```
 
 This writes an ignored mode-0600 inventory under `.generated/` and performs

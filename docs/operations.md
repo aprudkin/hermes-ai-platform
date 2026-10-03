@@ -28,8 +28,8 @@ profile, recreates only the service, and preserves profiles, sessions, memory,
 provider credentials, Codex auth, API credentials, and rollback evidence.
 
 The contract is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/messaging/telegram.md)
-and [v2026.8.27 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.27).
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
+and [v2026.9.14 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14).
 Syntax, Compose configuration, container health, and bounded connected-log
 status are deployment evidence only and do not prove user-visible Telegram
 behavior.
@@ -56,17 +56,17 @@ mutation remain separate approval boundaries. Passing local validation or CI
 does not authorize any of them.
 
 Profile reconciliation follows the CLI contract in the pinned Hermes
-[`v2026.8.27` source](https://github.com/NousResearch/hermes-agent/tree/v2026.8.27).
-[`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/hermes_cli/main.py)
+[`v2026.9.14` source](https://github.com/NousResearch/hermes-agent/tree/v2026.9.14).
+[`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/hermes_cli/profile_cmd.py)
 uses exit 1 with `does not exist` for a missing named profile, while
-[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/hermes_cli/config.py)
+[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/hermes_cli/config.py)
 uses exit 1 with `Config key not set` for a missing key. The role tolerates
 only those two documented absence results; every other non-zero query result
 fails before create or set operations.
 
 The desired profile matrix also sets `stt.language=ru` for the default profile
-and every named profile. In pinned Hermes `v2026.8.27`, the global
-[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/configuration.md#speech-to-text-stt)
+and every named profile. In pinned Hermes `v2026.9.14`, the global
+[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/configuration.md#speech-to-text-stt)
 value is the language hint for every STT provider unless a provider-specific
 language overrides it; an empty value restores provider auto-detection. This
 setting does not select an STT provider and is separate from the UI language.

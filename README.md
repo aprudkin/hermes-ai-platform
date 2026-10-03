@@ -14,7 +14,7 @@ Hetzner `hel1` and verified end to end on 2026-08-18.
 - an ingress firewall allowing SSH and ICMP only from configured CIDRs;
 - a separate existing-host path that creates no cloud resources;
 - Ubuntu hardening, Docker installation, and deployment through Ansible;
-- one pinned official `nousresearch/hermes-agent:v2026.8.27` container;
+- one pinned official `nousresearch/hermes-agent:v2026.9.14` container ([upstream release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14));
 - persistent Hermes state at `/opt/hermes/data`, with no public service port;
 - a real loopback gateway health check;
 - explicit provider/model configuration and a post-deploy inference probe;
@@ -57,7 +57,7 @@ Replace the documentation-only CIDR with the actual operator network. See
 [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for the snapshot details and
 mutation boundary.
 
-## Upstream contracts verified through 2026-08-27
+## Upstream documentation
 
 - [Hermes installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation)
 - [Hermes Docker layout and health endpoint](https://hermes-agent.nousresearch.com/docs/user-guide/docker)
@@ -89,8 +89,8 @@ Hermes service. It preserves provider credentials, Codex auth, profiles,
 sessions, memory, API credentials, and rollback evidence.
 
 The gateway contract is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/messaging/telegram.md)
-and [v2026.8.27 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.27).
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
+and [v2026.9.14 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14).
 Passing syntax, Compose configuration, container health, or a connected log
 marker is deployment evidence only; it is not Telegram behavioral proof.
 

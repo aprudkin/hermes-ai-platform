@@ -82,7 +82,7 @@ New-host form:
 Existing-host form:
 
 ```bash
-./installer/install.sh deploy existing --host 192.0.2.44 --ssh-user ubuntu --ssh-private-key ~/.ssh/luk --ssh-source-cidr 203.0.113.10/32 --hermes-env /protected/path/hermes.env --model-provider openrouter --model anthropic/claude-sonnet-4.6 --confirm-external-mutation
+./installer/install.sh deploy existing --host 192.0.2.44 --ssh-user ubuntu --ssh-public-key /protected/path/luk.pub --ssh-private-key /protected/path/luk --ssh-source-cidr 203.0.113.10/32 --hermes-env /protected/path/hermes.env --model-provider openrouter --model anthropic/claude-sonnet-4.6 --confirm-external-mutation
 ```
 
 ChatGPT-subscription new-host form:
@@ -163,8 +163,8 @@ Codex auth, API credentials, or rollback evidence, and it is never attempted
 automatically after a failure.
 
 The implementation is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.8.27/website/docs/user-guide/messaging/telegram.md)
-and [v2026.8.27 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.27).
+[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
+and [v2026.9.14 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14).
 Changing the image pin requires revalidation against both. Syntax checks,
 Compose rendering, health, and connected log status are not Telegram
 behavioral proof.
