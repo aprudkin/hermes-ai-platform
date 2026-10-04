@@ -1,6 +1,11 @@
 version: '3'
 
 tasks:
+  hermes:backup:
+    desc: Create and verify a local archive of deployed Hermes data
+    cmds:
+      - ./scripts/hermes_backup.sh
+
   hermes:update:
     desc: Back up Hermes, pin the latest stable release, push, and deploy
     cmds:

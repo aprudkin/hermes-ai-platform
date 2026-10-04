@@ -36,48 +36,8 @@ resolve_deploy_host() {
 }
 
 
-require_backup_configuration() {
-  require_var HERMES_DEPLOY_HOST
-  require_var HERMES_DEPLOY_SSH_USER
-  require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
-}
-
 backup_runtime_data() {
-  local backup_dir="${HERMES_BACKUP_DIR:-$HOME/backup/hermer}"
-  local timestamp temporary_archive archive
-
-  mkdir -p -- "$backup_dir"
-  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  archive="$backup_dir/hermes-data-$timestamp.tar.gz"
-  temporary_archive="$(mktemp "$backup_dir/.hermes-data-$timestamp.XXXXXX")"
-  trap 'rm -f -- "$temporary_archive"' RETURN
-
-  printf 'Creating consistent backup at %s\n' "$archive"
-  ssh \
-    -i "$HERMES_DEPLOY_SSH_PRIVATE_KEY" \
-    -o BatchMode=yes \
-    -o StrictHostKeyChecking=accept-new \
-    "$HERMES_DEPLOY_SSH_USER@$HERMES_DEPLOY_HOST" \
-    'bash -s' >"$temporary_archive" <<'REMOTE_BACKUP'
-set -euo pipefail
-
-docker inspect --format '{{.State.Running}}' hermes | grep -qx true
-docker pause hermes >&2
-cleanup() {
-  local status=$?
-  docker unpause hermes >&2 || status=$?
-  exit "$status"
-}
-trap cleanup EXIT
-tar --numeric-owner --xattrs --acls -C /opt/hermes -czf - data
-REMOTE_BACKUP
-
-  [[ -s "$temporary_archive" ]] || fail "remote backup archive is empty"
-  gzip --test "$temporary_archive"
-  tar --list --gzip --file "$temporary_archive" >/dev/null
-  mv -- "$temporary_archive" "$archive"
-  trap - RETURN
-  printf 'Backup verified: %s\n' "$archive"
+  HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh"
 }
 
 read_pinned_tag() {
@@ -249,7 +209,6 @@ main() {
   require_command tar
   resolve_deploy_host
 
-  require_backup_configuration
   backup_runtime_data
   require_command gh
   require_command git

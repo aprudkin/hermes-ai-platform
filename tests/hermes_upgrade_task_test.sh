@@ -19,6 +19,7 @@ review_file="$fixture_root/compatibility-review.json"
 mkdir -p "$fake_bin" "$fixture_repo/scripts" "$fixture_repo/docker" \
   "$fixture_repo/docs" "$fixture_repo/installer" "$remote_root/data"
 cp "$repo_root/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_upgrade.sh"
+cp "$repo_root/scripts/hermes_backup.sh" "$fixture_repo/scripts/hermes_backup.sh"
 cp "$repo_root/docker/docker-compose.yml" "$fixture_repo/docker/docker-compose.yml"
 cp "$repo_root/README.md" "$fixture_repo/README.md"
 cp "$repo_root/docs/operations.md" "$fixture_repo/docs/operations.md"
@@ -97,7 +98,8 @@ printf 'installer %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 FAKE
 
 chmod +x "$fake_bin/ssh" "$fake_bin/gh" "$fake_bin/git" "$fake_bin/terraform" \
-  "$fixture_repo/scripts/hermes_upgrade.sh" "$fixture_repo/installer/install.sh"
+  "$fixture_repo/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_backup.sh" \
+  "$fixture_repo/installer/install.sh"
 
 run_upgrade() {
   PATH="$fake_bin:$PATH" \

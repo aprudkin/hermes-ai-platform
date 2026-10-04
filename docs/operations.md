@@ -71,15 +71,28 @@ value is the language hint for every STT provider unless a provider-specific
 language overrides it; an empty value restores provider auto-detection. This
 setting does not select an STT provider and is separate from the UI language.
 
+## Hermes backups
+
+Run `task hermes:backup` to create one verified local archive of the deployed
+`/opt/hermes/data` state. The task uses `HERMES_DEPLOY_HOST` when set; otherwise
+it resolves the host from local Terraform state. Set `HERMES_DEPLOY_SSH_USER`
+and `HERMES_DEPLOY_SSH_PRIVATE_KEY` for the SSH connection. Archives default to
+`~/backup/hermer`; set `HERMES_BACKUP_DIR` to choose another local destination.
+
+The remote container is paused while its data streams to the controller. Its
+cleanup trap attempts to unpause it when archiving finishes or fails. If that
+attempt fails, the task reports an error; check the remote container state before
+resuming service-dependent operations. The task verifies the gzip archive and
+tar index before publishing the final file. The archive contains persistent
+Hermes state, including credentials, so protect and transfer it accordingly.
+The command creates a backup on each invocation; it does not configure a
+schedule or retention policy.
+
 ## Hermes image updates
 
-`task hermes:update` makes a new, verified archive of the persistent remote
-`/opt/hermes/data` state before it contacts GitHub for the latest stable
-`nousresearch/hermes-agent` release. Archives default to
-`~/backup/hermer`; set `HERMES_BACKUP_DIR` to use another local destination.
-The container is paused only while its archive streams to the controller, then
-unpaused even if archiving fails. The task checks the resulting gzip archive
-and its tar index before proceeding.
+`task hermes:update` first runs the same verified backup workflow for the
+persistent remote `/opt/hermes/data` state, then contacts GitHub for the latest
+stable `nousresearch/hermes-agent` release.
 
 The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
 `HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
