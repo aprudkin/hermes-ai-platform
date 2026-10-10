@@ -1,6 +1,9 @@
 # Portable Hermes backup and manual recovery
 
-This guide is included as `RESTORE.md` in each recovery bundle. It covers one
+This guide is included as `RESTORE.md` in each **full** recovery bundle created
+with `./scripts/hermes_backup.sh --full`. Ordinary `task backup:hermes` now saves
+[settings and personal state](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/personal-backup.md)
+without an image or recognized caches/dependencies. This full guide covers one
 Hermes container on Ubuntu 24.04 or newer, using host networking and the single
 `/opt/hermes/data:/opt/data` bind mount. It is not a whole-server backup or an
 automated restore command. A successful backup verification does not establish
@@ -14,12 +17,12 @@ Run from this repository on the controller, after authorizing a live backup:
 HERMES_DEPLOY_HOST=hermes-minimal \
 HERMES_DEPLOY_SSH_USER=root \
 HERMES_DEPLOY_SSH_PRIVATE_KEY="$HOME/.ssh/luk" \
-task backup:hermes
+./scripts/hermes_backup.sh --full
 ```
 
-`task b:hermes` is the short alias; `task hermes:backup` remains compatible.
-With the controller's global go-tasks catalog installed, the same operation is
-available from any directory as `t backup:hermes` or `t b:hermes`.
+The `--full` flag is required for this self-contained format. The ordinary task
+and its `b:hermes` / `hermes:backup` aliases create personal-state backups instead.
+The image-upgrade workflow explicitly uses full mode for its pre-upgrade backup.
 
 Use the intended SSH alias or address and existing private-key path. These
 connection values describe this project's deployment, not an arbitrary new

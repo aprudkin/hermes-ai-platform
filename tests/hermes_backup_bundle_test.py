@@ -135,28 +135,33 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         info.mode = 0o600
         archive.addfile(info, io.BytesIO(data))
 
-    def capture(self, fail="", low_space=False):
+    def capture(self, fail="", low_space=False, scope="full"):
         program = subprocess.run([sys.executable, str(HELPER), "program", str(self.guide)], capture_output=True)
         self.assertEqual(program.returncode, 0, program.stderr.decode())
         if low_space:
             # Substitute the real disk-usage boundary, not capture behavior.
             prefix, suffix = program.stdout.rsplit(b"    sys.exit(main())", 1)
             program.stdout = prefix + b"    shutil.disk_usage = lambda path: type('Disk', (), {'free': 0})()\n    sys.exit(main())" + suffix
-        result = subprocess.run([sys.executable, "-", "capture", str(self.root), "hermes"],
-                                input=program.stdout, capture_output=True, env=dict(self.env, FAIL=fail))
+        args = [sys.executable, "-", "capture", str(self.root), "hermes"]
+        if scope != "full":
+            args.append(scope)
+        result = subprocess.run(args, input=program.stdout, capture_output=True, env=dict(self.env, FAIL=fail))
         self.assertNotIn(b"secret-value", result.stderr)
         self.assertNotIn(b"secret-fixture", result.stderr)
         return result
 
-    def bundle(self):
-        result = self.capture()
+    def bundle(self, scope="full"):
+        result = self.capture(scope=scope)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         path = self.base / "bundle.tar.gz"
         path.write_bytes(result.stdout)
         return path
 
-    def verify(self, path, helper=HELPER):
-        result = subprocess.run([sys.executable, str(helper), "verify", str(path)], capture_output=True)
+    def verify(self, path, helper=HELPER, scope=None):
+        args = [sys.executable, str(helper), "verify", str(path)]
+        if scope is not None:
+            args.append(scope)
+        result = subprocess.run(args, capture_output=True)
         self.assertNotIn(b"secret-value", result.stdout + result.stderr)
         return result
 
@@ -216,6 +221,127 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         self.assertLess(snapshot, unpause)
         self.assertFalse((self.base / "paused").exists())
         self.assertEqual(list(self.root.glob(".hermes-backup-*")), [])
+
+    def personal_fixtures(self):
+        retained = ["data/.env", "data/auth.json", "data/MEMORY.md", "data/sessions/state.db",
+                    "data/skills/custom/SKILL.md", "data/cron/jobs.json",
+                    "data/custom-app/main.py", "data/custom-app/user-data.db",
+                    "data/custom-app/package.json", "data/custom-app/package-lock.json",
+                    "data/custom-app/uv.lock", "data/custom-app/bin/unknown-tool",
+                    "data/custom-app/cache/user-input.bin", "data/custom-app/env/settings",
+                    "data/.local/bin/unknown-tool", "data/.local/share/custom/data.bin",
+                    "data/custom-app/lazy-packages/own-data", "app/bin/own-binary",
+                    "app/application/custom.py", "data/profiles/manager/SOUL.md"]
+        excluded = ["data/.cache/model/weights", "data/.npm/download", "data/custom-app/node_modules/pkg/code",
+                    "data/custom-app/__pycache__/main.pyc", "data/.venv/bin/python",
+                    "data/profiles/manager/.cli-venv/bin/python", "data/.local/share/uv/python/tool",
+                    "data/custom-app/.local/share/uv/tools/code", "data/lazy-packages/pkg/code",
+                    "data/profiles/manager/lazy-packages/pkg/code"]
+        for names, sentinel in ((retained, b"personal-sentinel"), (excluded, b"regenerable-sentinel")):
+            for name in names:
+                target = self.root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(sentinel)
+        origin = self.root / "data/.cache/first-hardlink-source"
+        origin.write_bytes(b"retained-hardlink-data")
+        for name in ("data/custom-app/link-one", "data/custom-app/link-two"):
+            os.link(origin, self.root / name)
+            retained.append(name)
+        return retained, excluded
+
+    def test_personal_capture_preserves_user_state_not_images_or_regeneration_paths(self):
+        retained, excluded = self.personal_fixtures()
+        path = self.bundle(scope="personal")
+        result = self.verify(path, scope="personal")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        with tarfile.open(path) as archive:
+            self.assertNotIn("image.tar", archive.getnames())
+            manifest = json.load(archive.extractfile("manifest.json"))
+            self.assertEqual(manifest["format"], "hermes-personal-bundle")
+            self.assertEqual(manifest["version"], 1)
+            self.assertIn("state_policy", manifest)
+            self.assertNotIn("restore_tag", manifest["image"])
+            service = json.load(archive.extractfile("compose.restore.json"))["services"]["hermes"]
+            self.assertEqual(service["image"], self.container["Config"]["Image"])
+            self.assertEqual(service["pull_policy"], "missing")
+            state = self.base / "personal-state.tar"
+            state.write_bytes(archive.extractfile("state.tar").read())
+            embedded = self.base / "personal-verify.py"
+            embedded.write_bytes(archive.extractfile("verify.py").read())
+        with tarfile.open(state) as archive:
+            names = {name.rstrip("/") for name in archive.getnames()}
+            self.assertTrue(set(retained) <= names)
+            self.assertFalse(set(excluded) & names)
+            for name in retained:
+                self.assertIn(archive.extractfile(name).read(), (b"personal-sentinel", b"retained-hardlink-data"))
+        extracted = self.base / "personal-restore"
+        extracted.mkdir()
+        subprocess.run([self.env["REAL_TAR"], "-xf", str(state), "-C", str(extracted)], check=True)
+        self.assertEqual((extracted / "data/custom-app/link-one").read_bytes(), b"retained-hardlink-data")
+        self.assertEqual((extracted / "data/custom-app/link-one").stat().st_ino,
+                         (extracted / "data/custom-app/link-two").stat().st_ino)
+        self.assertEqual(self.verify(path).returncode, 0)
+        self.assertEqual(self.verify(path, helper=embedded, scope="personal").returncode, 0)
+        events = self.log.read_text()
+        self.assertNotIn("docker image save", events)
+        self.assertIn("docker pause", events)
+        self.assertIn("docker unpause", events)
+        self.assertFalse((self.base / "paused").exists())
+        self.assertEqual(list(self.root.glob(".hermes-backup-*")), [])
+
+    def test_verifier_rejects_wrong_bundle_scope_and_personal_excluded_state(self):
+        full = self.bundle()
+        full_copy = self.base / "full-copy.tar.gz"
+        shutil.copyfile(full, full_copy)
+        personal = self.bundle(scope="personal")
+        self.assertEqual(self.verify(full_copy, scope="full").returncode, 0)
+        self.assertNotEqual(self.verify(full_copy, scope="personal").returncode, 0)
+        self.assertNotEqual(self.verify(personal, scope="full").returncode, 0)
+        self.assertNotEqual(self.verify(personal, scope="unknown").returncode, 0)
+        for name in ("state.tar", "compose.restore.json"):
+            self.assertNotEqual(self.verify(self.rewrite_bundle(personal, {name: b"bad"})).returncode, 0)
+            self.assertNotEqual(self.verify(self.rewrite_bundle(personal, omit=name)).returncode, 0)
+        with tarfile.open(personal) as outer:
+            state = outer.extractfile("state.tar").read()
+        for forbidden in ("data/.cache/leaked", "data/profiles/manager/lazy-packages/leaked",
+                          "data/custom-app/.local/share/uv/leaked"):
+            output = io.BytesIO()
+            with tarfile.open(fileobj=io.BytesIO(state)) as source, tarfile.open(fileobj=output, mode="w") as dest:
+                for member in source:
+                    dest.addfile(member, source.extractfile(member) if member.isfile() else None)
+                self.add_bytes(dest, forbidden, b"excluded-content")
+            bad = self.rewrite_with_rehashed_payload(personal, "state.tar", output.getvalue())
+            self.assertNotEqual(self.verify(bad, scope="personal").returncode, 0)
+
+    def test_personal_failures_preserve_pause_cleanup_and_never_export_image(self):
+        for failure in ("pause", "snapshot", "replacement", "unpause", "signal"):
+            with self.subTest(failure=failure):
+                self.log.write_text("")
+                (self.base / "paused").unlink(missing_ok=True)
+                result = self.capture(failure, scope="personal")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, b"")
+                self.assertNotIn("docker image save", self.log.read_text())
+                self.assertIn("docker unpause", self.log.read_text())
+                if failure != "unpause":
+                    self.assertFalse((self.base / "paused").exists())
+                self.assertEqual(list(self.root.glob(".hermes-backup-*")), [])
+
+    def test_personal_space_budget_ignores_images_and_excluded_dependencies(self):
+        self.personal_fixtures()
+        with (self.root / "data/.cache/large-regenerable-file").open("wb") as stream:
+            stream.truncate(100 * 1024 * 1024 * 1024)
+        spec = importlib.util.spec_from_file_location("bundle", HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        available = 70 * 1024 * 1024
+        with mock.patch.object(helper.shutil, "disk_usage", return_value=shutil._ntuple_diskusage(available, 0, available)):
+            budget = helper.require_space(self.root, {"Size": 100 * 1024 * 1024 * 1024}, personal=True)
+            self.assertLess(budget, available)
+            with self.assertRaises(helper.BundleError):
+                helper.require_space(self.root, self.image)
+        self.assertNotEqual(self.capture(low_space=True, scope="personal").returncode, 0)
+        self.assertNotIn("docker pause", self.log.read_text())
 
     def test_unsupported_mount_and_layer_changes_fail_without_pausing(self):
         for mutation in ("mount", "diff"):
@@ -306,8 +432,9 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         spec.loader.exec_module(helper)
         helper.BUNDLE_SOURCE = HELPER.read_text()
         helper.RESTORE_GUIDE = self.guide.read_text()
-        for elapsed, succeeds in ((31 * 60, True), (91 * 60, False)):
-            with self.subTest(elapsed=elapsed):
+        for elapsed, succeeds, scope in ((31 * 60, True, "full"), (91 * 60, False, "full"),
+                                        (31 * 60, True, "personal"), (91 * 60, False, "personal")):
+            with self.subTest(elapsed=elapsed, scope=scope):
                 armed = [0]
                 deadlines = []
 
@@ -330,20 +457,26 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
                      mock.patch.object(helper.sys, 'stdout', mock.Mock(buffer=output)), \
                      mock.patch.object(helper, 'run', wraps=helper.run) as commands:
                     if succeeds:
-                        helper.capture(str(self.root), 'hermes')
+                        helper.capture(str(self.root), 'hermes', scope)
                     else:
                         with self.assertRaises(helper.BundleError):
-                            helper.capture(str(self.root), 'hermes')
+                            helper.capture(str(self.root), 'hermes', scope)
                 self.assertEqual(deadlines, [5400, 0])
                 snapshots = [call for call in commands.call_args_list if call.args[0][0] == 'tar']
                 self.assertEqual(len(snapshots), 1)
-                self.assertEqual(snapshots[0].kwargs['timeout'], 300)
+                if scope == "full":
+                    self.assertEqual(snapshots[0].kwargs['timeout'], 300)
+                else:
+                    self.assertGreater(snapshots[0].kwargs['timeout'], 0)
+                    self.assertLessEqual(snapshots[0].kwargs['timeout'], 300)
+                    self.assertFalse(any(call.args[0][:3] == ['docker', 'image', 'save']
+                                         for call in commands.call_args_list))
                 self.assertFalse((self.base / 'paused').exists())
                 self.assertEqual(list(self.root.glob('.hermes-backup-*')), [])
                 if succeeds:
                     bundle = self.base / 'slow-stream.tar.gz'
                     bundle.write_bytes(output.getvalue())
-                    helper.verify(bundle)
+                    helper.verify(bundle, scope)
 
     def test_stream_after_unpause_does_not_stage_another_compressed_bundle(self):
         # Incompressible data keeps the child blocked on its stdout pipe while
@@ -705,11 +838,12 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--fixture-bundle":
+    if len(sys.argv) == 3 and sys.argv[1] in ("--fixture-bundle", "--fixture-personal-bundle"):
         fixture = BundleTest(methodName="test_bundle_layout_effective_config_and_embedded_verifier")
         try:
             fixture.setUp()
-            shutil.copyfile(fixture.bundle(), sys.argv[2])
+            scope = "personal" if sys.argv[1] == "--fixture-personal-bundle" else "full"
+            shutil.copyfile(fixture.bundle(scope=scope), sys.argv[2])
         finally:
             fixture.doCleanups()
     else:

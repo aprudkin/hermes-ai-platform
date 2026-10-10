@@ -35,7 +35,8 @@ set -euo pipefail
 printf 'ssh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 cat >"$FAKE_FIXTURE_ROOT/remote-program.py"
 case "$FAKE_SSH_MODE" in
-  success) cat "$FAKE_FIXTURE_ROOT/valid.tar.gz" ;;
+  success) cat "$FAKE_FIXTURE_ROOT/personal.tar.gz" ;;
+  full) cat "$FAKE_FIXTURE_ROOT/full.tar.gz" ;;
   legacy) cat "$FAKE_FIXTURE_ROOT/legacy.tar.gz" ;;
   bad-tar) cat "$FAKE_FIXTURE_ROOT/bad-tar.gz" ;;
   corrupt) printf 'not gzip\n' ;;
@@ -64,7 +65,7 @@ run_backup() {
     HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
     HERMES_DEPLOY_SSH_USER=root \
     HERMES_DEPLOY_SSH_PRIVATE_KEY="$private_key" \
-    "$repo_root/scripts/hermes_backup.sh"
+    "$repo_root/scripts/hermes_backup.sh" "$@"
 }
 
 archive_count() {
@@ -73,9 +74,10 @@ archive_count() {
 
 expect_failure() {
   local mode="$1" before
+  shift
   before="$(archive_count)"
-  if FAKE_SSH_MODE="$mode" run_backup >"$fixture_root/$mode.out" 2>&1; then
-    fail "$mode input must not be published as a complete recovery bundle"
+  if FAKE_SSH_MODE="$mode" run_backup "$@" >"$fixture_root/$mode.out" 2>&1; then
+    fail "$mode input must not be published as a verified backup for the requested scope"
   fi
   [[ "$(archive_count)" == "$before" ]] || fail "$mode left a final archive"
   ! grep -q 'Backup verified:' "$fixture_root/$mode.out" \
@@ -84,17 +86,23 @@ expect_failure() {
     || fail "$mode left temporary backup files"
 }
 
-# A gzip-readable data-only archive is not sufficient for portable recovery.
+python3 "$repo_root/tests/hermes_backup_bundle_test.py" \
+  --fixture-bundle "$fixture_root/full.tar.gz"
+# The default must not accept a full image-bearing bundle instead of personal state.
+expect_failure full
+printf 'PASS default scope rejects full recovery bundles\n'
+
+# Gzip readability alone is not proof of a verified personal backup.
 expect_failure legacy
-printf 'PASS data-only archives cannot masquerade as complete recovery bundles\n'
+printf 'PASS legacy archives cannot masquerade as verified personal backups\n'
 
 python3 "$repo_root/tests/hermes_backup_bundle_test.py" \
-  --fixture-bundle "$fixture_root/valid.tar.gz"
+  --fixture-personal-bundle "$fixture_root/personal.tar.gz"
 : >"$command_log"
 run_backup >"$fixture_root/success.out"
-archives=("$backup_dir"/hermes-recovery-*.tar.gz)
-[[ "${#archives[@]}" -eq 1 && -f "${archives[0]}" ]] || fail "expected one recovery bundle"
-python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}"
+archives=("$backup_dir"/hermes-personal-*.tar.gz)
+[[ "${#archives[@]}" -eq 1 && -f "${archives[0]}" ]] || fail "expected one personal backup"
+python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}" personal
 python3 - "${archives[0]}" <<'PYTHON'
 from pathlib import Path
 import stat
@@ -102,15 +110,15 @@ import sys
 assert stat.S_IMODE(Path(sys.argv[1]).stat().st_mode) == 0o600
 PYTHON
 grep -q 'Backup verified:' "$fixture_root/success.out" || fail "missing verified success"
-grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes' "$command_log" \
-  || fail "SSH must execute the capture helper against the fixed project runtime"
+grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes personal$' "$command_log" \
+  || fail "default SSH capture must request personal state from the fixed runtime"
 python3 - "$fixture_root/remote-program.py" <<'PYTHON'
 from pathlib import Path
 import sys
 compile(Path(sys.argv[1]).read_text(), '<remote-program>', 'exec')
 PYTHON
 ! grep -q '^terraform ' "$command_log" || fail "explicit host must not require Terraform"
-printf 'PASS protected complete bundle is verified before publication\n'
+printf 'PASS protected personal backup is verified before publication\n'
 
 for mode in failure partial empty corrupt bad-tar legacy; do
   expect_failure "$mode"
@@ -125,6 +133,27 @@ grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log
 grep -q 'root@203.0.113.44' "$command_log" || fail "resolved host was not used"
 [[ "$(archive_count)" == 2 ]] || fail "successive backups must remain distinct"
 printf 'PASS omitted host resolves from Terraform state\n'
+
+: >"$command_log"
+FAKE_SSH_MODE=full run_backup --full >"$fixture_root/full-success.out"
+archives=("$backup_dir"/hermes-recovery-*.tar.gz)
+[[ "${#archives[@]}" -eq 1 && -f "${archives[0]}" ]] || fail "expected one explicit full bundle"
+python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}" full
+grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes$' "$command_log" \
+  || fail "explicit full capture must retain the full recovery path"
+expect_failure success --full
+[[ "$(archive_count)" == 3 ]] || fail "scope mismatch must preserve all prior backups"
+printf 'PASS explicit full recovery remains available and rejects personal-only input\n'
+
+: >"$command_log"
+if run_backup --unknown >"$fixture_root/invalid-flag.out" 2>&1; then
+  fail "unknown flags must fail before host access"
+fi
+if run_backup --full unexpected >"$fixture_root/extra-argument.out" 2>&1; then
+  fail "extra arguments must fail before host access"
+fi
+[[ ! -s "$command_log" ]] || fail "invalid arguments contacted an external command"
+printf 'PASS invalid arguments fail before SSH or Terraform\n'
 
 for task_name in backup:hermes b:hermes hermes:backup; do
   task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" \

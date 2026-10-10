@@ -138,7 +138,9 @@ FAKE_HERMES_TAG=v2026.8.27 run_upgrade >"$fixture_root/no-update.out"
 archives=("$backup_dir"/*.tar.gz)
 [[ "${#archives[@]}" -eq 1 ]] \
   || fail "the no-update path must create exactly one backup archive"
-python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}"
+python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}" full
+grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes$' "$command_log" \
+  || fail "upgrade backup must explicitly retain full recovery, not the personal default"
 python3 - "${archives[0]}" <<'PYTHON'
 import sys
 import tarfile

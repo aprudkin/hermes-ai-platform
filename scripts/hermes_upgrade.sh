@@ -37,7 +37,7 @@ resolve_deploy_host() {
 
 
 backup_runtime_data() {
-  HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh"
+  HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh" --full
 }
 
 read_pinned_tag() {

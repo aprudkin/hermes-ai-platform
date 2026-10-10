@@ -38,6 +38,20 @@ resolve_deploy_host() {
 
 main() {
   local backup_dir timestamp archive
+  local scope=personal prefix=hermes-personal
+  local guide="$repo_root/docs/personal-backup.md"
+  local remote_command='python3 - capture /opt/hermes hermes personal'
+  local description='Hermes personal-state backup'
+
+  if [[ "$#" -eq 1 && "${1:-}" == --full ]]; then
+    scope=full
+    prefix=hermes-recovery
+    guide="$repo_root/docs/backup-restore.md"
+    remote_command='python3 - capture /opt/hermes hermes'
+    description='portable Hermes recovery bundle'
+  elif [[ "$#" -ne 0 ]]; then
+    fail "usage: hermes_backup.sh [--full] (default: personal state)"
+  fi
 
   umask 077
   require_command ssh
@@ -49,21 +63,20 @@ main() {
   backup_dir="${HERMES_BACKUP_DIR:-$HOME/backup/hermer}"
   mkdir -p -- "$backup_dir"
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  archive="$backup_dir/hermes-recovery-$timestamp-$$.tar.gz"
-  temporary_archive="$(mktemp "$backup_dir/.hermes-recovery-$timestamp.XXXXXX")"
+  archive="$backup_dir/$prefix-$timestamp-$$.tar.gz"
+  temporary_archive="$(mktemp "$backup_dir/.$prefix-$timestamp.XXXXXX")"
   trap 'if [[ -n "${temporary_archive:-}" ]]; then rm -f -- "$temporary_archive"; fi' EXIT
 
-  printf 'Creating portable Hermes recovery bundle at %s\n' "$archive"
-  python3 "$repo_root/scripts/hermes_backup_bundle.py" program \
-    "$repo_root/docs/backup-restore.md" | ssh \
+  printf 'Creating %s at %s\n' "$description" "$archive"
+  python3 "$repo_root/scripts/hermes_backup_bundle.py" program "$guide" | ssh \
     -i "$HERMES_DEPLOY_SSH_PRIVATE_KEY" \
     -o BatchMode=yes \
     -o StrictHostKeyChecking=accept-new \
     "$HERMES_DEPLOY_SSH_USER@$HERMES_DEPLOY_HOST" \
-    'python3 - capture /opt/hermes hermes' >"$temporary_archive"
+    "$remote_command" >"$temporary_archive"
 
   [[ -s "$temporary_archive" ]] || fail "remote backup archive is empty"
-  python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "$temporary_archive"
+  python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "$temporary_archive" "$scope"
   mv -- "$temporary_archive" "$archive"
   printf 'Backup verified: %s\n' "$archive"
 }

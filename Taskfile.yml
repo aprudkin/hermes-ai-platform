@@ -3,7 +3,7 @@ version: '3'
 tasks:
   backup:hermes:
     aliases: [b:hermes, hermes:backup]
-    desc: Create and verify a portable Hermes recovery bundle
+    desc: Back up Hermes settings and personal state without images or caches
     cmds:
       - ./scripts/hermes_backup.sh
 

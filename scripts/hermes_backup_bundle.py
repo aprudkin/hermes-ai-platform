@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture and structurally verify a private, portable Hermes recovery bundle.
+"""Capture and structurally verify private Hermes personal or recovery bundles.
 
 No Docker or host mutations occur in verify/program. Capture pauses only its
 identified container, stores secrets privately, and unpauses before packaging.
@@ -20,10 +20,22 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 FORMAT = "hermes-recovery-bundle"
+PERSONAL_FORMAT = "hermes-personal-bundle"
 PAYLOADS = {"state.tar", "image.tar", "compose.restore.json", "RESTORE.md",
             "container-inspect.json", "image-inspect.json", "verify.py"}
+PERSONAL_PAYLOADS = PAYLOADS - {"image.tar"}
+# Named components anywhere in app/data; uv's exact relative subpath anywhere;
+# lazy-packages only at actual Hermes home roots. No general bin/cache/env,
+# .local, database, large-file, or custom-application exclusions.
+PERSONAL_POLICY = {
+    "version": 1,
+    "excluded_components": [".cache", ".npm", "node_modules", "__pycache__", ".venv", ".cli-venv"],
+    "excluded_subpaths": [".local/share/uv"],
+    "excluded_hermes_paths": ["data/lazy-packages", "data/profiles/<name>/lazy-packages"],
+}
 HEX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SMALL_LIMIT = 16 * 1024 * 1024
 
@@ -144,14 +156,14 @@ def escape_compose(value):
     return value
 
 
-def restore_compose(container, root, tag):
+def restore_compose(container, root, tag, personal=False):
     config, host = container["Config"], container["HostConfig"]
     restart = host.get("RestartPolicy", {})
     policy = restart.get("Name") or "no"
     require(policy in ("no", "always", "unless-stopped", "on-failure"), "unsupported restart policy")
     if policy == "on-failure" and restart.get("MaximumRetryCount"):
         policy += ":" + str(restart["MaximumRetryCount"])
-    service = {"image": tag, "pull_policy": "never", "container_name": "hermes",
+    service = {"image": tag, "pull_policy": "missing" if personal else "never", "container_name": "hermes",
                "network_mode": "host", "restart": policy,
                "volumes": [{"type": "bind", "source": str(root / "data"),
                             "target": "/opt/data", "read_only": False}],
@@ -209,8 +221,61 @@ def digest_file(path):
     return {"sha256": digest.hexdigest(), "size": size}
 
 
-def require_space(root, image):
+def personal_excluded(name):
+    parts = PurePosixPath(name).parts
+    if any(part in PERSONAL_POLICY["excluded_components"] for part in parts):
+        return True
+    if any(parts[index:index + 3] == (".local", "share", "uv") for index in range(len(parts) - 2)):
+        return True
+    return (parts[:2] == ("data", "lazy-packages")
+            or (len(parts) >= 4 and parts[:2] == ("data", "profiles") and parts[3] == "lazy-packages"))
+
+
+def personal_paths(root, deadline=None):
+    """Yield retained paths without following symlinks or entering exclusions."""
+    def walk_failed(error):
+        raise BundleError("cannot scan personal state")
+    for tree in (root / "data", root / "app"):
+        for directory, dirs, files in os.walk(tree, followlinks=False, onerror=walk_failed):
+            require(deadline is None or time.monotonic() < deadline, "personal snapshot scan timed out")
+            dirs[:] = sorted(name for name in dirs
+                             if not personal_excluded((Path(directory) / name).relative_to(root).as_posix()))
+            yield Path(directory).relative_to(root).as_posix()
+            directory_names = set(dirs)
+            for name in dirs + sorted(files):
+                path = Path(directory) / name
+                relative = path.relative_to(root).as_posix()
+                if not personal_excluded(relative) and (name not in directory_names or path.is_symlink()):
+                    require(deadline is None or time.monotonic() < deadline, "personal snapshot scan timed out")
+                    yield relative
+
+
+def personal_snapshot(root, stage):
+    # Enumerate during the owned pause. Feed only retained paths, without tar
+    # recursion, so excluded first hardlink sources cannot capture the inode.
+    deadline = time.monotonic() + 300
+    paths = stage / "state-files.list"
+    with paths.open("wb") as stream:
+        for name in personal_paths(root, deadline):
+            stream.write(os.fsencode(name) + b"\0")
+    remaining = deadline - time.monotonic()
+    require(remaining > 0, "personal snapshot scan timed out")
+    run(["tar", "--numeric-owner", "--acls", "--xattrs", "-cf", str(stage / "state.tar"),
+         "-C", str(root), "--no-recursion", "--null", "-T", str(paths)], timeout=remaining)
+
+
+def require_space(root, image, personal=False):
     """Conservative staging budget, not a reservation or a whole-host audit."""
+    if personal:
+        size, entries = 0, 0
+        for name in personal_paths(root):
+            info = (root / name).lstat()
+            entries += 1
+            if stat.S_ISREG(info.st_mode):
+                size += info.st_size
+        budget = size + entries * 4096 + 64 * 1024 * 1024
+        require(shutil.disk_usage(root).free >= budget, "insufficient staging space")
+        return budget
     require(type(image.get("Size")) is int and image["Size"] >= 0, "invalid image size")
     size, entries = image["Size"], 0
     def walk_failed(error):
@@ -234,7 +299,10 @@ def interrupted(signum, frame):
     raise BundleError("capture interrupted or timed out")
 
 
-def capture(root_arg, name):
+def capture(root_arg, name, scope="full"):
+    require(scope in ("personal", "full"), "unsupported backup scope")
+    personal = scope == "personal"
+    payloads = PERSONAL_PAYLOADS if personal else PAYLOADS
     require("RESTORE_GUIDE" in globals() and "BUNDLE_SOURCE" in globals(),
             "capture requires the generated embedded program")
     root = Path(root_arg)
@@ -260,16 +328,18 @@ def capture(root_arg, name):
             image_id = container["Image"]
             image = inspect("image", image_id)
             require(image.get("Id") == image_id, "image inspection identity mismatch")
-            require_space(root, image)
+            require_space(root, image, personal=personal)
             diff = layer_diff(container_id)
-            tag = "hermes-recovery:" + image_id[7:]
-            compose = restore_compose(container, root, tag)
+            tag = container["Config"].get("Image") if personal else "hermes-recovery:" + image_id[7:]
+            require(isinstance(tag, str) and tag, "invalid image reference")
+            compose = restore_compose(container, root, tag, personal=personal)
             write_json(stage / "container-inspect.json", container)
             write_json(stage / "image-inspect.json", image)
             write_json(stage / "compose.restore.json", compose)
             (stage / "RESTORE.md").write_text(RESTORE_GUIDE, encoding="utf-8")
             (stage / "verify.py").write_text(BUNDLE_SOURCE, encoding="utf-8")
-            run(["docker", "image", "save", "--output", str(stage / "image.tar"), image_id], timeout=900)
+            if not personal:
+                run(["docker", "image", "save", "--output", str(stage / "image.tar"), image_id], timeout=900)
             owned_pause = False
             try:
                 current = inspect("container", name)
@@ -282,8 +352,11 @@ def capture(root_arg, name):
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during pause")
                 diff = layer_diff(container_id)
-                run(["tar", "--numeric-owner", "--acls", "--xattrs", "-cf", str(stage / "state.tar"),
-                     "-C", str(root), "data", "app"], timeout=300)
+                if personal:
+                    personal_snapshot(root, stage)
+                else:
+                    run(["tar", "--numeric-owner", "--acls", "--xattrs", "-cf", str(stage / "state.tar"),
+                         "-C", str(root), "data", "app"], timeout=300)
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during snapshot")
@@ -305,20 +378,23 @@ def capture(root_arg, name):
                         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
                             signal.signal(signum, interrupted)
             signal.alarm(5400)
-            manifest = {"format": FORMAT, "version": 1,
+            manifest = {"format": PERSONAL_FORMAT if personal else FORMAT, "version": 1,
                         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "source": {"root": str(root), "container": name, "container_id": container_id, "profile": profile},
                         "image": {"id": image_id, "reference": container["Config"].get("Image"),
                                   "repo_digests": image.get("RepoDigests") or [], "os": image.get("Os"),
                                   "architecture": image.get("Architecture"), "restore_tag": tag},
                         "layer_diff": diff,
-                        "payloads": {name: digest_file(stage / name) for name in sorted(PAYLOADS)}}
+                        "payloads": {name: digest_file(stage / name) for name in sorted(payloads)}}
+            if personal:
+                del manifest["image"]["restore_tag"]
+                manifest["state_policy"] = PERSONAL_POLICY
             write_json(stage / "manifest.json", manifest)
             # Stream after unpause: do not duplicate the archive or verification
             # payloads on the server. The controller verifies before publication.
             try:
                 with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz") as archive:
-                    for name in ["manifest.json"] + sorted(PAYLOADS):
+                    for name in ["manifest.json"] + sorted(payloads):
                         archive.add(stage / name, arcname=name, recursive=False)
                 sys.stdout.buffer.flush()
             finally:
@@ -383,13 +459,14 @@ def zero_tail(stream):
         require(not block.strip(b"\x00"), "unexpected content after archive end")
 
 
-def validate_state(path, profile):
+def validate_state(path, profile, personal=False):
     seen, links, hardlinks = {}, set(), []
     with tarfile.open(path, "r:") as archive:
         for member in archive:
             name = safe_name(member.name)
             require(name.split("/")[0] in ("app", "data") and name not in seen,
                     "unexpected or duplicate state member")
+            require(not personal or not personal_excluded(name), "excluded content in personal state")
             require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
                     "unsupported state file type")
             seen[name] = member
@@ -527,7 +604,8 @@ def validate_image(path, expected):
         zero_tail(archive.fileobj)
 
 
-def verify(bundle):
+def verify(bundle, scope=None):
+    require(scope in (None, "personal", "full"), "unsupported backup scope")
     # A private staging copy bounds memory regardless of state/image size. It
     # writes opaque tar bytes only, never extracts caller-controlled filenames.
     os.umask(0o077)
@@ -557,15 +635,22 @@ def verify(bundle):
             # Drain gzip to require CRC/footer validation, including truncation.
             while compressed.read(1024 * 1024):
                 pass
-        require(seen == PAYLOADS | {"manifest.json"}, "required bundle member missing")
         for name in ("manifest.json", "container-inspect.json", "image-inspect.json", "compose.restore.json"):
             metadata[name] = json.loads((stage / name).read_bytes())
         manifest = metadata["manifest.json"]
-        require(manifest.get("format") == FORMAT and type(manifest.get("version")) is int
+        require(manifest.get("format") in (FORMAT, PERSONAL_FORMAT) and type(manifest.get("version")) is int
                 and manifest["version"] == 1, "unsupported recovery bundle schema")
-        require(set(manifest["payloads"]) == PAYLOADS and all(isinstance(manifest["payloads"][name], dict)
+        personal = manifest["format"] == PERSONAL_FORMAT
+        require(scope is None or scope == ("personal" if personal else "full"), "backup scope mismatch")
+        payloads = PERSONAL_PAYLOADS if personal else PAYLOADS
+        require(seen == payloads | {"manifest.json"}, "required or unexpected bundle member")
+        if personal:
+            policy = manifest.get("state_policy")
+            require(isinstance(policy, dict) and type(policy.get("version")) is int
+                    and policy == PERSONAL_POLICY, "unsupported personal state policy")
+        require(set(manifest["payloads"]) == payloads and all(isinstance(manifest["payloads"][name], dict)
                 and type(manifest["payloads"][name].get("size")) is int
-                and manifest["payloads"][name] == hashes[name] for name in PAYLOADS), "payload integrity mismatch")
+                and manifest["payloads"][name] == hashes[name] for name in payloads), "payload integrity mismatch")
         require(isinstance(manifest.get("created_at"), str)
                 and datetime.datetime.fromisoformat(manifest["created_at"]).tzinfo is not None,
                 "invalid creation time")
@@ -573,7 +658,8 @@ def verify(bundle):
         require(isinstance(source["root"], str) and source["root"].startswith("/")
                 and source["container"] == "hermes" and re.fullmatch(r"[0-9a-f]{64}", source["container_id"])
                 and re.fullmatch(r"[A-Za-z0-9_-]+", source["profile"]), "invalid source metadata")
-        require(HEX.fullmatch(image["id"]) and image["restore_tag"] == "hermes-recovery:" + image["id"][7:]
+        require(HEX.fullmatch(image["id"]) and ((personal and "restore_tag" not in image)
+                or (not personal and image["restore_tag"] == "hermes-recovery:" + image["id"][7:]))
                 and isinstance(image["reference"], str) and image["reference"]
                 and isinstance(image["repo_digests"], list) and image["os"] == "linux"
                 and isinstance(image["architecture"], str) and image["architecture"], "invalid image metadata")
@@ -584,12 +670,14 @@ def verify(bundle):
         require(inspected_image.get("Id") == image["id"] and inspected_image.get("Os") == image["os"]
                 and inspected_image.get("Architecture") == image["architecture"]
                 and (inspected_image.get("RepoDigests") or []) == image["repo_digests"], "image metadata mismatch")
-        require(metadata["compose.restore.json"] == restore_compose(container, Path(source["root"]), image["restore_tag"]),
-                "restore configuration mismatch")
+        restore_image = image["reference"] if personal else image["restore_tag"]
+        require(metadata["compose.restore.json"] == restore_compose(container, Path(source["root"]), restore_image,
+                                                                   personal=personal), "restore configuration mismatch")
         require((stage / "RESTORE.md").stat().st_size > 0 and (stage / "verify.py").stat().st_size > 0,
                 "empty recovery instructions or verifier")
-        validate_state(stage / "state.tar", source["profile"])
-        validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
+        validate_state(stage / "state.tar", source["profile"], personal=personal)
+        if not personal:
+            validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
     return manifest
 
 
@@ -601,13 +689,16 @@ def main():
             guide = Path(args[1]).read_bytes().decode("utf-8")
             require(bool(guide), "restore guide is empty")
             sys.stdout.write("RESTORE_GUIDE = " + repr(guide) + "\nBUNDLE_SOURCE = " + repr(source) + "\n" + source)
-        elif len(args) == 3 and args[0] == "capture":
-            capture(args[1], args[2])
-        elif len(args) == 2 and args[0] == "verify":
-            verify(Path(args[1]))
-            print("Recovery bundle integrity and structure verified; restore not tested.")
+        elif len(args) in (3, 4) and args[0] == "capture":
+            capture(args[1], args[2], args[3] if len(args) == 4 else "full")
+        elif len(args) in (2, 3) and args[0] == "verify":
+            manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None)
+            if manifest["format"] == PERSONAL_FORMAT:
+                print("Personal bundle integrity and retained state verified; reinstall/restore not tested.")
+            else:
+                print("Recovery bundle integrity and structure verified; restore not tested.")
         else:
-            raise BundleError("usage: helper program GUIDE | capture ROOT hermes | verify BUNDLE.tar.gz")
+            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full]")
         return 0
     except BundleError as error:
         # BundleError messages are fixed developer strings, never runtime data.

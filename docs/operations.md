@@ -74,22 +74,23 @@ setting does not select an STT provider and is separate from the UI language.
 ## Hermes backups
 
 Run `task backup:hermes` (short alias `task b:hermes`; legacy alias
-`task hermes:backup`) to create one verified portable recovery bundle for
-the supported single-container deployment. It includes `/opt/hermes/data`,
-`/opt/hermes/app`, the exact installed Docker image, effective runtime metadata,
-a standalone recovery Compose definition, and a manual recovery guide. This
-preserves server-side changes even when the controller's Git checkout differs.
+`task hermes:backup`) to create a verified **personal-state backup**. It keeps
+configuration/authentication, memory/history, custom skills and jobs, and custom
+application source/data from `/opt/hermes/data` and `/opt/hermes/app`. Recognized
+caches and dependency environments are excluded; no Docker image is exported.
+Small runtime metadata, a Compose definition and a manual recovery guide are
+included. Restore requires a separately installed image and dependencies.
 
 The task uses `HERMES_DEPLOY_HOST` when set; otherwise it resolves the host from
 local Terraform state. Set `HERMES_DEPLOY_SSH_USER` and
 `HERMES_DEPLOY_SSH_PRIVATE_KEY` for SSH. The controller requires Python 3; the
 server requires Python 3, Docker access and GNU tar. Bundles default to
-`~/backup/hermer/hermes-recovery-<timestamp>-<pid>.tar.gz`; set
+`~/backup/hermer/hermes-personal-<timestamp>-<pid>.tar.gz`; set
 `HERMES_BACKUP_DIR` to choose another local destination.
 
-One image export and one state snapshot are staged privately on the server.
-The free-space check covers those files and metadata overhead, not multiple
-copies. Compression streams to the controller, which verifies the transfer
+One filtered state snapshot is staged privately on the server. The free-space
+check covers retained state and metadata overhead, not an image or excluded
+caches. Compression streams to the controller, which verifies the transfer
 using temporary uncompressed payloads before publishing the final archive.
 The container is paused only while the state snapshot is written locally,
 then unpaused before compression and network transfer. Cleanup attempts to release its owned pause on failure. A failed
@@ -97,21 +98,28 @@ unpause is an error; check the actual container state before continuing. Do not
 deploy or edit server state concurrently with a backup.
 
 Before publishing the mode-0600 final archive, the task verifies the bundle
-format, required recovery contents and payload hashes. This is not proof of a
+personal-state format, required contents and payload hashes. This is not proof of a
 successful live restore. The bundle contains credentials and is not encrypted;
 protect its storage and transfer. It does not copy the entire host, controller
 SSH keys, Terraform state or external service settings, and does not configure
 a schedule, retention, automatic restore or cloud storage. Legacy data-only
-archives are not complete recovery bundles.
+archives and full recovery bundles cannot masquerade as personal-state backups.
 
-See [Portable Hermes backup and manual recovery](backup-restore.md) for the
-contents, resource requirements, verification, restoration steps and single-owner
-Telegram/scheduled-job cutover. The same guide is bundled as `RESTORE.md`.
+See [Hermes settings and personal-state backup](personal-backup.md) for exact
+exclusions, resource requirements and manual recovery boundaries. That guide is
+included as `RESTORE.md`. Unknown files and custom binaries are retained; the
+backup is not a promise of a small, fixed archive size.
+
+For explicit self-contained migration, `./scripts/hermes_backup.sh --full`
+retains dependencies and the installed image in the existing
+`hermes-recovery-*.tar.gz` format. See the
+[full recovery guide](backup-restore.md). Existing archives are not rewritten or
+deleted when the ordinary backup default changes.
 
 ## Hermes image updates
 
-`task update:hermes` (legacy alias `task hermes:update`) first creates the same
-verified portable recovery bundle, including the current image and deployed
+`task update:hermes` (legacy alias `task hermes:update`) explicitly requests a
+verified **full** recovery bundle, including the current image and deployed
 app/data state, then contacts GitHub for the latest stable
 `nousresearch/hermes-agent` release.
 
