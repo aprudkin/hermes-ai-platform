@@ -275,8 +275,10 @@ grep -q 'root@203.0.113.44' "$command_log" \
 printf 'PASS omitted deployment host resolves from Terraform state\n'
 
 
-task --taskfile "$repo_root/Taskfile.yml" --dry hermes:update \
-  >"$fixture_root/task-dry-run.out" 2>&1
-grep -q './scripts/hermes_upgrade.sh' "$fixture_root/task-dry-run.out" \
-  || fail "Go Task dry run must invoke the upgrade workflow"
-printf 'PASS Go Task exposes the upgrade workflow\n'
+for task_name in update:hermes hermes:update; do
+  task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" \
+    >"$fixture_root/task-dry-run.out" 2>&1
+  grep -q './scripts/hermes_upgrade.sh' "$fixture_root/task-dry-run.out" \
+    || fail "Go Task $task_name must invoke the upgrade workflow"
+done
+printf 'PASS Go Task exposes the canonical upgrade task and legacy alias\n'

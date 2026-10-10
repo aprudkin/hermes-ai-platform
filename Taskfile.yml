@@ -7,7 +7,8 @@ tasks:
     cmds:
       - ./scripts/hermes_backup.sh
 
-  hermes:update:
+  update:hermes:
+    aliases: ['hermes:update']
     desc: Back up Hermes, pin the latest stable release, push, and deploy
     cmds:
       - ./scripts/hermes_upgrade.sh

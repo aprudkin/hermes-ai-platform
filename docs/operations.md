@@ -110,9 +110,10 @@ Telegram/scheduled-job cutover. The same guide is bundled as `RESTORE.md`.
 
 ## Hermes image updates
 
-`task hermes:update` first creates the same verified portable recovery bundle,
-including the current image and deployed app/data state, then contacts GitHub
-for the latest stable `nousresearch/hermes-agent` release.
+`task update:hermes` (legacy alias `task hermes:update`) first creates the same
+verified portable recovery bundle, including the current image and deployed
+app/data state, then contacts GitHub for the latest stable
+`nousresearch/hermes-agent` release.
 
 The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
 `HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
