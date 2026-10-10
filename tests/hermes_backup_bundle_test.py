@@ -481,6 +481,177 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         bundle = self.bundle()
         self.assertEqual(self.verify(bundle).returncode, 0)
 
+    def make_oci_image(self, attack="", root_kind="index", compression="gzip", variant="", two_layers=False):
+        # Synthetic standard OCI layout, not a claim about a retained live export.
+        blobs = {}
+        def blob(data, media_type):
+            digest = "sha256:" + hashlib.sha256(data).hexdigest()
+            blobs["blobs/sha256/" + digest[7:]] = data
+            return {"mediaType": media_type, "digest": digest, "size": len(data)}
+        def document(value, media_type):
+            return blob(json.dumps(value).encode(), media_type)
+        index_type = "application/vnd.oci.image.index.v1+json"
+        manifest_type = "application/vnd.oci.image.manifest.v1+json"
+        config_type = "application/vnd.oci.image.config.v1+json"
+        layer_type = "application/vnd.oci.image.layer.v1.tar"
+        compressed = self.layer if compression == "raw" else gzip.compress(self.layer, mtime=0)
+        if compression == "gzip":
+            layer_type += "+gzip"
+        elif compression == "zstd":
+            from compression import zstd
+            compressed = zstd.compress(self.layer)
+            layer_type += "+zstd"
+        config_bytes = self.image_config
+        if variant or two_layers:
+            config_value = json.loads(config_bytes)
+            if variant:
+                config_value["variant"] = variant
+            if two_layers:
+                config_value["rootfs"]["diff_ids"] *= 2
+            config_bytes = json.dumps(config_value).encode()
+        config = blob(config_bytes, config_type)
+        layer = blob(compressed, layer_type)
+        saved_config = "blobs/sha256/" + config["digest"][7:]
+        saved_layer = "blobs/sha256/" + layer["digest"][7:]
+        if attack == "unlinked-config":
+            config = blob(config_bytes + b"\n", config_type)
+        elif attack == "unlinked-layer":
+            # Same uncompressed diff_id, but not the descriptor's saved bytes.
+            layer = blob(gzip.compress(self.layer, mtime=1), layer_type)
+        elif attack == "config-size":
+            config["size"] += 1
+        elif attack == "layer-size":
+            layer["size"] += 1
+        elif attack == "config-media-type":
+            config["mediaType"] = layer_type
+        elif attack == "layer-media-type":
+            layer["mediaType"] = config_type
+        layer_descriptors = [layer]
+        saved_layers = [saved_layer]
+        if two_layers:
+            # Two representations with identical diff_ids isolate descriptor
+            # order validation from the existing uncompressed-layer checks.
+            second = blob(gzip.compress(self.layer, mtime=1), layer_type)
+            layer_descriptors.append(second)
+            saved_layers.append("blobs/sha256/" + second["digest"][7:])
+            if attack == "reordered-layers":
+                saved_layers.reverse()
+        image_manifest = {"schemaVersion": 2, "mediaType": manifest_type,
+                          "config": config, "layers": layer_descriptors}
+        if attack == "manifest-schema":
+            image_manifest["schemaVersion"] = 1
+        elif attack == "missing-config-descriptor":
+            del image_manifest["config"]
+        elif attack == "missing-layer-descriptor":
+            image_manifest["layers"] = []
+        manifest = document(image_manifest, manifest_type)
+        manifest["platform"] = {"os": "linux", "architecture": "amd64"}
+        if variant:
+            manifest["platform"]["variant"] = variant
+        if attack == "wrong-platform":
+            manifest["platform"]["architecture"] = "arm64"
+        elif attack == "wrong-variant":
+            manifest["platform"]["variant"] = "v3"
+        elif attack == "missing-platform":
+            del manifest["platform"]
+        elif attack == "manifest-size":
+            manifest["size"] += 1
+        # Docker retains the original index even when other platforms' blobs
+        # are absent. Put that unavailable platform first to test selection.
+        manifests = [{"mediaType": manifest_type, "digest": "sha256:" + "d" * 64,
+                      "size": 123, "platform": {"os": "linux", "architecture": "arm64"}}, manifest]
+        if attack == "ambiguous-platform":
+            manifests.append(dict(manifest))
+        elif attack == "nested-index":
+            manifest["mediaType"] = index_type
+        if root_kind == "index":
+            root = document({"schemaVersion": 1 if attack == "root-schema" else 2,
+                             "mediaType": index_type, "manifests": manifests}, index_type)
+        else:
+            root = manifest
+        index = {"schemaVersion": 2, "mediaType": index_type, "manifests": [dict(root)]}
+        if attack == "unlinked-root":
+            index["manifests"][0]["digest"] = manifest["digest"]
+        elif attack == "root-size":
+            index["manifests"][0]["size"] += 1
+        elif attack == "root-media-type":
+            index["manifests"][0]["mediaType"] = config_type
+        if attack in ("missing-root", "forged-root"):
+            name = "blobs/sha256/" + root["digest"][7:]
+            if attack == "missing-root":
+                del blobs[name]
+            else:
+                blobs[name] += b"\n"
+        elif attack == "missing-manifest":
+            del blobs["blobs/sha256/" + manifest["digest"][7:]]
+        elif attack == "missing-config":
+            del blobs[saved_config]
+        elif attack == "missing-layer":
+            del blobs[saved_layer]
+        with tarfile.open(self.image_tar, "w") as archive:
+            for name, data in blobs.items():
+                self.add_bytes(archive, name, data)
+            self.add_bytes(archive, "oci-layout", b'{"imageLayoutVersion":"1.0.0"}')
+            if attack != "missing-index":
+                self.add_bytes(archive, "index.json", json.dumps(index).encode())
+            self.add_bytes(archive, "manifest.json", json.dumps([{
+                "Config": saved_config, "RepoTags": [], "Layers": saved_layers}]).encode())
+        self.real_image_id = root["digest"]
+        self.container["Image"] = self.real_image_id
+        self.image["Id"] = self.real_image_id
+        self.image["Descriptor"] = root
+        self.image["Variant"] = variant
+        self.save_fixture()
+
+    def test_oci_index_and_manifest_roots_authenticate_exact_saved_image(self):
+        compressions = ["raw", "gzip"]
+        try:
+            from compression import zstd
+        except ImportError:
+            pass
+        else:
+            compressions.append("zstd")
+        for root_kind in ("index", "manifest"):
+            for compression in compressions:
+                with self.subTest(root_kind=root_kind, compression=compression):
+                    self.make_oci_image(root_kind=root_kind, compression=compression)
+                    path = self.bundle()
+                    result = self.verify(path)
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    with tarfile.open(path) as archive:
+                        helper = self.base / "oci-verify.py"
+                        helper.write_bytes(archive.extractfile("verify.py").read())
+                    self.assertEqual(self.verify(path, helper).returncode, 0)
+
+    def test_oci_layers_must_match_descriptor_order_even_with_same_diff_ids(self):
+        self.make_oci_image(two_layers=True)
+        result = self.verify(self.bundle())
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.make_oci_image(two_layers=True, attack="reordered-layers")
+        result = self.verify(self.bundle())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"saved OCI layer linkage mismatch", result.stderr)
+
+    def test_oci_platform_selection_uses_inspected_variant(self):
+        self.make_oci_image(variant="v2")
+        result = self.verify(self.bundle())
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.make_oci_image(variant="v2", attack="wrong-variant")
+        self.assertNotEqual(self.verify(self.bundle()).returncode, 0)
+
+    def test_oci_identity_rejects_forged_missing_and_unlinked_content(self):
+        for attack in ("forged-root", "missing-root", "missing-index", "unlinked-root",
+                       "root-size", "root-media-type", "root-schema", "manifest-schema",
+                       "manifest-size", "missing-manifest",
+                       "wrong-platform", "wrong-variant", "missing-platform", "ambiguous-platform", "nested-index",
+                       "unlinked-config", "config-size", "config-media-type", "missing-config",
+                       "missing-config-descriptor", "unlinked-layer", "layer-size", "layer-media-type",
+                       "missing-layer", "missing-layer-descriptor"):
+            with self.subTest(attack=attack):
+                self.make_oci_image(attack=attack)
+                result = self.verify(self.bundle())
+                self.assertNotEqual(result.returncode, 0)
+
     def test_zstd_layers_require_available_stdlib_decoder(self):
         spec = importlib.util.spec_from_file_location("bundle", HELPER)
         helper = importlib.util.module_from_spec(spec)

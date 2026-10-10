@@ -417,9 +417,77 @@ def validate_state(path, profile):
         require(name in seen and seen[name].isdir(), "active profile state missing")
 
 
+def validate_oci_identity(archive, seen, expected, config_digest, config_size, layers):
+    # The archive's outer index is only a locator. Trust starts at the inspected
+    # root digest and follows checked descriptors, never tags or platform alone.
+    index_type = "application/vnd.oci.image.index.v1+json"
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer_types = {"application/vnd.oci.image.layer.v1.tar" + suffix
+                   for suffix in ("", "+gzip", "+zstd")}
+
+    def metadata(name):
+        require(name in seen and seen[name].isfile(), "OCI metadata missing")
+        value = json_member(archive, seen[name])
+        require(isinstance(value, dict), "invalid OCI metadata")
+        return value
+
+    def document(descriptor, allowed):
+        member = checked_descriptor(descriptor, allowed)
+        value = metadata(member.name)
+        require(type(value.get("schemaVersion")) is int and value["schemaVersion"] == 2
+                and value.get("mediaType", descriptor["mediaType"]) == descriptor["mediaType"],
+                "invalid OCI document schema")
+        return value
+
+    def checked_descriptor(descriptor, allowed):
+        require(isinstance(descriptor, dict) and descriptor.get("mediaType") in allowed
+                and isinstance(descriptor.get("digest"), str) and HEX.fullmatch(descriptor["digest"])
+                and type(descriptor.get("size")) is int and descriptor["size"] >= 0,
+                "invalid OCI descriptor")
+        name = "blobs/sha256/" + descriptor["digest"][7:]
+        # validate_image already hashed every stored blob against its filename.
+        require(name in seen and seen[name].isfile() and seen[name].size == descriptor["size"],
+                "OCI descriptor blob missing or size mismatch")
+        return seen[name]
+
+    require(metadata("oci-layout").get("imageLayoutVersion") == "1.0.0", "unsupported OCI layout")
+    index = metadata("index.json")
+    require(type(index.get("schemaVersion")) is int and index["schemaVersion"] == 2
+            and index.get("mediaType", index_type) == index_type
+            and isinstance(index.get("manifests"), list), "invalid OCI archive index")
+    roots = [entry for entry in index["manifests"]
+             if isinstance(entry, dict) and entry.get("digest") == expected["id"]]
+    require(len(roots) == 1, "saved OCI root identity missing or ambiguous")
+    root = roots[0]
+    image_manifest = document(root, {index_type, manifest_type})
+    if root["mediaType"] == index_type:
+        require(isinstance(image_manifest.get("manifests"), list), "invalid OCI image index")
+        platform = {"os": expected["os"], "architecture": expected["architecture"],
+                    "variant": expected.get("variant", "")}
+        selected = [entry for entry in image_manifest["manifests"]
+                    if isinstance(entry, dict) and isinstance(entry.get("platform"), dict)
+                    and all(entry["platform"].get(key, "") == value for key, value in platform.items())]
+        require(len(selected) == 1, "saved OCI platform missing or ambiguous")
+        # Other platforms may legitimately be absent from Docker's content store.
+        # Nested indexes and ambiguous platform selections fail closed.
+        image_manifest = document(selected[0], {manifest_type})
+    config_descriptor = image_manifest.get("config")
+    checked_descriptor(config_descriptor, {config_type})
+    require(config_descriptor["digest"] == config_digest and config_descriptor["size"] == config_size,
+            "saved OCI config linkage mismatch")
+    descriptors = image_manifest.get("layers")
+    require(isinstance(descriptors, list) and len(descriptors) == len(layers), "saved OCI layer count mismatch")
+    for name, descriptor in zip(layers, descriptors):
+        member = checked_descriptor(descriptor, layer_types)
+        saved = seen[safe_name(name)]
+        require(saved.size == descriptor["size"] and (saved.name == member.name
+                or read_member(archive, saved) == descriptor["digest"]), "saved OCI layer linkage mismatch")
+
+
 def validate_image(path, expected):
-    # Docker save's manifest/config must identify exactly the inspected image.
-    # Uncompressed layer digests are checked; nothing is extracted or loaded.
+    # Docker save may identify a legacy config or an OCI manifest/index root.
+    # Both authenticate the exact config and ordered layers; nothing is loaded.
     with tarfile.open(path, "r:") as archive:
         seen = {}
         for member in archive:
@@ -440,7 +508,7 @@ def validate_image(path, expected):
         config_member = seen[config_name]
         require(config_member.size <= SMALL_LIMIT, "image config exceeds size limit")
         config_bytes = archive.extractfile(config_member).read()
-        require("sha256:" + hashlib.sha256(config_bytes).hexdigest() == expected["id"], "saved image identity mismatch")
+        config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
         config = json.loads(config_bytes)
         require(config.get("os") == expected["os"] and config.get("architecture") == expected["architecture"],
                 "saved image platform mismatch")
@@ -452,6 +520,9 @@ def validate_image(path, expected):
             require(name in seen and seen[name].isfile(), "image layer missing")
             require(HEX.fullmatch(diff_id) and layer_digest(archive, seen[name]) == diff_id,
                     "image layer identity mismatch")
+        if config_digest != expected["id"]:
+            validate_oci_identity(archive, seen, expected, config_digest, len(config_bytes), layers)
+            require(config.get("variant", "") == expected.get("variant", ""), "saved image variant mismatch")
         archive.fileobj.seek(archive.offset)
         zero_tail(archive.fileobj)
 
@@ -518,7 +589,7 @@ def verify(bundle):
         require((stage / "RESTORE.md").stat().st_size > 0 and (stage / "verify.py").stat().st_size > 0,
                 "empty recovery instructions or verifier")
         validate_state(stage / "state.tar", source["profile"])
-        validate_image(stage / "image.tar", image)
+        validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
     return manifest
 
 

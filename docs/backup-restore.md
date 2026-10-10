@@ -120,6 +120,10 @@ python3 scripts/hermes_backup_bundle.py verify /secure/path/hermes-recovery.tar.
 
 Verification checks the bundle format, required contents, payload hashes and
 recovery metadata without extracting user files or displaying their contents.
+For classic Docker image IDs, it checks the saved configuration digest. For OCI
+index or manifest IDs, it verifies the saved descriptor chain to the selected
+platform's configuration and ordered layers instead of equating those distinct
+digests. A missing or inconsistent identity chain is rejected.
 It temporarily writes private opaque copies of the nested tar payloads and
 removes them afterward. Saved image layers may be uncompressed or gzip; zstd
 layers require a Python runtime with the standard-library `compression.zstd`
@@ -136,6 +140,15 @@ custom binaries and virtual environments inside the data volume may depend on
 that architecture. Prepare appropriate SSH access, host firewall policy and
 outbound access separately. Keep the dashboard/API on loopback as captured;
 do not expose them publicly to make a migration work.
+
+If the saved `image-inspect.json` has an OCI index or manifest in
+`Descriptor.mediaType`, prepare the target with the
+[containerd image store](https://docs.docker.com/engine/storage/containerd).
+The classic image store uses configuration digests rather than these OCI
+identities and cannot preserve the exact image-ID contract used below.
+Docker Engine 29+ enables containerd on fresh installations; an upgraded daemon
+may still use the classic store. Do not switch a populated host's storage
+backend as an implicit recovery step.
 
 Use a new, empty `/opt/hermes` destination and no existing container named
 `hermes`. Its Linux filesystem must support the saved numeric ownership, ACLs
