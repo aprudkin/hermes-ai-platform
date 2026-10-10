@@ -73,7 +73,8 @@ setting does not select an STT provider and is separate from the UI language.
 
 ## Hermes backups
 
-Run `task hermes:backup` to create one verified portable recovery bundle for
+Run `task backup:hermes` (short alias `task b:hermes`; legacy alias
+`task hermes:backup`) to create one verified portable recovery bundle for
 the supported single-container deployment. It includes `/opt/hermes/data`,
 `/opt/hermes/app`, the exact installed Docker image, effective runtime metadata,
 a standalone recovery Compose definition, and a manual recovery guide. This

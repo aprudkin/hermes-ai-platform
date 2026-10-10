@@ -126,8 +126,10 @@ grep -q 'root@203.0.113.44' "$command_log" || fail "resolved host was not used"
 [[ "$(archive_count)" == 2 ]] || fail "successive backups must remain distinct"
 printf 'PASS omitted host resolves from Terraform state\n'
 
-task --taskfile "$repo_root/Taskfile.yml" --dry hermes:backup \
-  >"$fixture_root/task-dry-run.out" 2>&1
-grep -q './scripts/hermes_backup.sh' "$fixture_root/task-dry-run.out" \
-  || fail "Go Task must expose the standalone backup command"
-printf 'PASS Go Task exposes the standalone backup workflow\n'
+for task_name in backup:hermes b:hermes hermes:backup; do
+  task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" \
+    >"$fixture_root/task-dry-run.out" 2>&1
+  grep -q './scripts/hermes_backup.sh' "$fixture_root/task-dry-run.out" \
+    || fail "Go Task $task_name must expose the standalone backup command"
+done
+printf 'PASS Go Task exposes canonical, short, and legacy backup names\n'

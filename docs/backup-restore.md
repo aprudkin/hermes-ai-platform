@@ -14,8 +14,12 @@ Run from this repository on the controller, after authorizing a live backup:
 HERMES_DEPLOY_HOST=hermes-minimal \
 HERMES_DEPLOY_SSH_USER=root \
 HERMES_DEPLOY_SSH_PRIVATE_KEY="$HOME/.ssh/luk" \
-task hermes:backup
+task backup:hermes
 ```
+
+`task b:hermes` is the short alias; `task hermes:backup` remains compatible.
+With the controller's global go-tasks catalog installed, the same operation is
+available from any directory as `t backup:hermes` or `t b:hermes`.
 
 Use the intended SSH alias or address and existing private-key path. These
 connection values describe this project's deployment, not an arbitrary new
