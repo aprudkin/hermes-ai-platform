@@ -12,9 +12,6 @@ Verification does not establish that a live restore or integrations work.
 After authorizing a live backup, run from this repository on the controller:
 
 ```bash
-HERMES_DEPLOY_HOST=hermes-minimal \
-HERMES_DEPLOY_SSH_USER=root \
-HERMES_DEPLOY_SSH_PRIVATE_KEY="$HOME/.ssh/luk" \
 task backup:hermes
 ```
 
@@ -22,12 +19,22 @@ task backup:hermes
 backup. With the controller's global go-tasks catalog installed, use
 `t backup:hermes` or `t b:hermes` from another directory.
 
-Use the intended SSH alias/address and existing key. The server account needs
-permission to read the state, stage a snapshot beneath `/opt/hermes`, and use
-Docker without an interactive prompt; the wrapper does not invoke `sudo`.
-The controller needs Python 3; the server needs Python 3, Docker and GNU tar.
-An omitted `HERMES_DEPLOY_HOST` resolves through `server_ipv4` in local Terraform
-state, without applying infrastructure changes.
+With no deployment variables set, the wrapper connects to `hermes-minimal` and
+lets SSH read its user and identity from the controller's `~/.ssh/config`.
+Configure that alias for the intended Hermes server before running the task.
+No Terraform lookup is needed for this default.
+
+To override the connection, set `HERMES_DEPLOY_HOST` to an SSH alias or address.
+`HERMES_DEPLOY_SSH_USER` and `HERMES_DEPLOY_SSH_PRIVATE_KEY` are optional overrides;
+a supplied key must be an existing regular file. For compatibility, supplying
+either user or key **without a host** retains the `server_ipv4` lookup from
+local Terraform state. Set the host explicitly when overriding credentials
+for an alias. Empty values are treated as unset. No Terraform apply is run.
+
+The server account needs permission to read the state, stage a snapshot beneath
+`/opt/hermes`, and use Docker without an interactive prompt; the wrapper does
+not invoke `sudo`. The controller needs Python 3; the server needs Python 3,
+Docker and GNU tar.
 
 The default destination is
 `~/backup/hermer/hermes-personal-<UTC timestamp>-<process id>.tar.gz`.

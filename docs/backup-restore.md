@@ -14,9 +14,6 @@ that a live restore or the bot's integrations have been tested.
 Run from this repository on the controller, after authorizing a live backup:
 
 ```bash
-HERMES_DEPLOY_HOST=hermes-minimal \
-HERMES_DEPLOY_SSH_USER=root \
-HERMES_DEPLOY_SSH_PRIVATE_KEY="$HOME/.ssh/luk" \
 ./scripts/hermes_backup.sh --full
 ```
 
@@ -24,15 +21,21 @@ The `--full` flag is required for this self-contained format. The ordinary task
 and its `b:hermes` / `hermes:backup` aliases create personal-state backups instead.
 The image-upgrade workflow explicitly uses full mode for its pre-upgrade backup.
 
-Use the intended SSH alias or address and existing private-key path. These
-connection values describe this project's deployment, not an arbitrary new
-host. The SSH account needs root or equivalent permissions to read all Hermes
-state, create the lock and private staging beneath `/opt/hermes`, and access
-Docker without an interactive privilege prompt. The wrapper does not invoke
-`sudo`. If `HERMES_DEPLOY_HOST` is omitted, the task
-uses `server_ipv4` from the controller's local Terraform state. There is no
-Terraform apply. `HERMES_BACKUP_DIR` overrides the local destination; its default
-remains `~/backup/hermer`.
+With no deployment variables set, the wrapper uses the `hermes-minimal` alias
+and its user and identity from the controller's `~/.ssh/config`. Configure that
+alias for the intended Hermes deployment. `HERMES_DEPLOY_HOST` overrides the
+alias/address; `HERMES_DEPLOY_SSH_USER` and `HERMES_DEPLOY_SSH_PRIVATE_KEY` optionally
+override the user and key. A supplied key must be an existing regular file.
+For compatibility, supplying either user or key without a host uses `server_ipv4`
+from local Terraform state instead of the alias. Set the host explicitly when
+overriding credentials for an alias. Empty values are treated as unset. There
+is no Terraform apply.
+
+The SSH account needs root or equivalent permissions to read all Hermes state,
+create the lock and private staging beneath `/opt/hermes`, and access Docker
+without an interactive privilege prompt. The wrapper does not invoke `sudo`.
+`HERMES_BACKUP_DIR` overrides the local destination; its default remains
+`~/backup/hermer`.
 
 The result is `hermes-recovery-<UTC timestamp>-<process id>.tar.gz`, mode `0600`.
 Only a completed and verified transfer receives that final name. Existing

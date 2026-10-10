@@ -33,6 +33,7 @@ cat >"$fake_bin/ssh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
+printf '%s\0' "$@" >"$FAKE_FIXTURE_ROOT/ssh-args"
 cat >"$FAKE_FIXTURE_ROOT/remote-program.py"
 case "$FAKE_SSH_MODE" in
   success) cat "$FAKE_FIXTURE_ROOT/personal.tar.gz" ;;
@@ -155,10 +156,104 @@ fi
 [[ ! -s "$command_log" ]] || fail "invalid arguments contacted an external command"
 printf 'PASS invalid arguments fail before SSH or Terraform\n'
 
+# Exercise the same missing-environment boundary as an ordinary shell launch.
+run_connection_backup() {
+  env -u HERMES_DEPLOY_HOST -u HERMES_DEPLOY_SSH_USER \
+    -u HERMES_DEPLOY_SSH_PRIVATE_KEY \
+    PATH="$fake_bin:$PATH" \
+    FAKE_COMMAND_LOG="$command_log" \
+    FAKE_FIXTURE_ROOT="$fixture_root" \
+    FAKE_SSH_MODE=success \
+    HERMES_BACKUP_DIR="$backup_dir" \
+    "$@"
+}
+
+assert_connection() {
+  python3 - "$fixture_root/ssh-args" "$@" <<'PYTHON'
+from pathlib import Path
+import sys
+
+args = Path(sys.argv[1]).read_bytes().decode().split('\0')[:-1]
+destination, key, scope = sys.argv[2:]
+assert args[-2] == destination, args
+command = 'python3 - capture /opt/hermes hermes'
+if scope == 'personal':
+    command += ' personal'
+assert args[-1] == command, args
+if key:
+    assert args[args.index('-i') + 1] == key, args
+else:
+    assert '-i' not in args, args
+assert '-o' in args and 'BatchMode=yes' in args, args
+PYTHON
+  ! grep -q '^terraform ' "$command_log" || fail "alias/explicit host must not use Terraform"
+}
+
+: >"$command_log"
+run_connection_backup "$repo_root/scripts/hermes_backup.sh" >"$fixture_root/default-alias.out"
+assert_connection hermes-minimal '' personal
+: >"$command_log"
+run_connection_backup HERMES_DEPLOY_HOST='' HERMES_DEPLOY_SSH_USER='' \
+  HERMES_DEPLOY_SSH_PRIVATE_KEY='' "$repo_root/scripts/hermes_backup.sh" \
+  >"$fixture_root/empty-alias.out"
+assert_connection hermes-minimal '' personal
+printf 'PASS unset/empty deployment variables use the SSH alias without identity overrides\n'
+
+: >"$command_log"
+before="$(archive_count)"
+if run_connection_backup FAKE_SSH_MODE=failure "$repo_root/scripts/hermes_backup.sh" \
+  >"$fixture_root/alias-failure.out" 2>&1; then
+  fail "SSH alias failure must not succeed or switch targets"
+fi
+assert_connection hermes-minimal '' personal
+[[ "$(grep -c '^ssh ' "$command_log")" == 1 ]] || fail "alias failure retried SSH"
+[[ "$(archive_count)" == "$before" ]] || fail "alias failure published an archive"
+[[ -z "$(find "$backup_dir" -maxdepth 1 -name '.hermes-*' -print -quit)" ]] \
+  || fail "alias failure left temporary backup files"
+printf 'PASS SSH alias failure does not fall back to Terraform or publish a backup\n'
+
 for task_name in backup:hermes b:hermes hermes:backup; do
-  task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" \
-    >"$fixture_root/task-dry-run.out" 2>&1
-  grep -q './scripts/hermes_backup.sh' "$fixture_root/task-dry-run.out" \
-    || fail "Go Task $task_name must expose the standalone backup command"
+  : >"$command_log"
+  run_connection_backup task --taskfile "$repo_root/Taskfile.yml" "$task_name" \
+    >"$fixture_root/task-run.out" 2>&1
+  assert_connection hermes-minimal '' personal
+  grep -q 'Backup verified:' "$fixture_root/task-run.out" \
+    || fail "Go Task $task_name must verify the backup without deployment variables"
 done
-printf 'PASS Go Task exposes canonical, short, and legacy backup names\n'
+printf 'PASS canonical, short, and legacy Task names run without deployment variables\n'
+
+: >"$command_log"
+run_connection_backup FAKE_SSH_MODE=full "$repo_root/scripts/hermes_backup.sh" --full \
+  >"$fixture_root/full-alias.out"
+assert_connection hermes-minimal '' full
+printf 'PASS explicit full mode also accepts the default SSH alias\n'
+
+: >"$command_log"
+run_connection_backup HERMES_DEPLOY_HOST=other-hermes "$repo_root/scripts/hermes_backup.sh" \
+  >"$fixture_root/host-only.out"
+assert_connection other-hermes '' personal
+
+: >"$command_log"
+run_connection_backup HERMES_DEPLOY_HOST=other-hermes HERMES_DEPLOY_SSH_USER=operator \
+  "$repo_root/scripts/hermes_backup.sh" >"$fixture_root/user-override.out"
+assert_connection operator@other-hermes '' personal
+
+key_with_spaces="$fixture_root/override key"
+cp "$private_key" "$key_with_spaces"
+: >"$command_log"
+run_connection_backup HERMES_DEPLOY_HOST=other-hermes \
+  HERMES_DEPLOY_SSH_PRIVATE_KEY="$key_with_spaces" \
+  "$repo_root/scripts/hermes_backup.sh" >"$fixture_root/key-override.out"
+assert_connection other-hermes "$key_with_spaces" personal
+printf 'PASS explicit host, user and key overrides preserve SSH argument boundaries\n'
+
+: >"$command_log"
+if run_connection_backup HERMES_DEPLOY_HOST=other-hermes \
+  HERMES_DEPLOY_SSH_PRIVATE_KEY="$fixture_root/missing-key" \
+  "$repo_root/scripts/hermes_backup.sh" >"$fixture_root/missing-key.out" 2>&1; then
+  fail "an explicitly supplied missing key must fail"
+fi
+[[ ! -s "$command_log" ]] || fail "missing key contacted SSH or Terraform"
+grep -q 'HERMES_DEPLOY_SSH_PRIVATE_KEY must name an existing regular file' \
+  "$fixture_root/missing-key.out" || fail "missing key failure must identify the bad input"
+printf 'PASS explicitly supplied keys are checked before external access\n'

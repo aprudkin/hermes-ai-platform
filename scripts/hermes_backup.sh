@@ -30,6 +30,13 @@ resolve_deploy_host() {
     return
   fi
 
+  # A plain backup uses the controller's SSH alias. Retain Terraform lookup
+  # for callers that already supply deployment credentials but omit the host.
+  if [[ -z "${HERMES_DEPLOY_SSH_USER:-}" && -z "${HERMES_DEPLOY_SSH_PRIVATE_KEY:-}" ]]; then
+    HERMES_DEPLOY_HOST=hermes-minimal
+    return
+  fi
+
   require_command terraform
   HERMES_DEPLOY_HOST="$(terraform -chdir="$repo_root/terraform" output -raw server_ipv4)" \
     || fail "failed to resolve HERMES_DEPLOY_HOST from Terraform state"
@@ -37,7 +44,8 @@ resolve_deploy_host() {
 }
 
 main() {
-  local backup_dir timestamp archive
+  local backup_dir timestamp archive ssh_destination
+  local -a ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
   local scope=personal prefix=hermes-personal
   local guide="$repo_root/docs/personal-backup.md"
   local remote_command='python3 - capture /opt/hermes hermes personal'
@@ -56,9 +64,15 @@ main() {
   umask 077
   require_command ssh
   require_command python3
-  require_var HERMES_DEPLOY_SSH_USER
-  require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
+  if [[ -n "${HERMES_DEPLOY_SSH_PRIVATE_KEY:-}" ]]; then
+    require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
+    ssh_options+=(-i "$HERMES_DEPLOY_SSH_PRIVATE_KEY")
+  fi
   resolve_deploy_host
+  ssh_destination="$HERMES_DEPLOY_HOST"
+  if [[ -n "${HERMES_DEPLOY_SSH_USER:-}" ]]; then
+    ssh_destination="$HERMES_DEPLOY_SSH_USER@$ssh_destination"
+  fi
 
   backup_dir="${HERMES_BACKUP_DIR:-$HOME/backup/hermer}"
   mkdir -p -- "$backup_dir"
@@ -68,11 +82,10 @@ main() {
   trap 'if [[ -n "${temporary_archive:-}" ]]; then rm -f -- "$temporary_archive"; fi' EXIT
 
   printf 'Creating %s at %s\n' "$description" "$archive"
+  # remote_command is selected from fixed literals above, not remote variables.
+  # shellcheck disable=SC2029
   python3 "$repo_root/scripts/hermes_backup_bundle.py" program "$guide" | ssh \
-    -i "$HERMES_DEPLOY_SSH_PRIVATE_KEY" \
-    -o BatchMode=yes \
-    -o StrictHostKeyChecking=accept-new \
-    "$HERMES_DEPLOY_SSH_USER@$HERMES_DEPLOY_HOST" \
+    "${ssh_options[@]}" "$ssh_destination" \
     "$remote_command" >"$temporary_archive"
 
   [[ -s "$temporary_archive" ]] || fail "remote backup archive is empty"

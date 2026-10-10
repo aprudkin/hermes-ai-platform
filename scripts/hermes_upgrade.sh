@@ -37,6 +37,10 @@ resolve_deploy_host() {
 
 
 backup_runtime_data() {
+  # Deployment still needs explicit credentials even though standalone backups
+  # can use SSH config. Reject missing inputs before any backup or later push.
+  require_var HERMES_DEPLOY_SSH_USER
+  require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
   HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh" --full
 }
 

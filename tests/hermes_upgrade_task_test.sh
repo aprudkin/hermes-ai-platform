@@ -112,8 +112,8 @@ run_upgrade() {
     FAKE_BACKUP_FAILURE="${FAKE_BACKUP_FAILURE:-no}" \
     HERMES_BACKUP_DIR="$backup_dir" \
     HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
-    HERMES_DEPLOY_SSH_USER=root \
-    HERMES_DEPLOY_SSH_PRIVATE_KEY="$private_key" \
+    HERMES_DEPLOY_SSH_USER="${HERMES_DEPLOY_SSH_USER-root}" \
+    HERMES_DEPLOY_SSH_PRIVATE_KEY="${HERMES_DEPLOY_SSH_PRIVATE_KEY-$private_key}" \
     HERMES_DEPLOY_SSH_PUBLIC_KEY="$public_key" \
     HERMES_DEPLOY_SSH_SOURCE_CIDR=198.51.100.10/32 \
     HERMES_MODEL_PROVIDER=openrouter \
@@ -122,6 +122,19 @@ run_upgrade() {
     HERMES_UPGRADE_REVIEW_FILE="${HERMES_UPGRADE_REVIEW_FILE:-}" \
     "$fixture_repo/scripts/hermes_upgrade.sh"
 }
+
+for variable in HERMES_DEPLOY_SSH_USER HERMES_DEPLOY_SSH_PRIVATE_KEY; do
+  : >"$command_log"
+  if (export "$variable="; FAKE_HERMES_TAG=v2026.9.01 run_upgrade) \
+    >"$fixture_root/missing-ssh-input.out" 2>&1; then
+    fail "upgrade must reject missing $variable even when plain backups use SSH config"
+  fi
+  [[ ! -s "$command_log" ]] \
+    || fail "missing $variable must stop before backup, release lookup, push or deployment"
+  grep -q "$variable must be set" "$fixture_root/missing-ssh-input.out" \
+    || fail "upgrade must explain the missing SSH input"
+done
+printf 'PASS upgrade still requires explicit SSH user and key before backup\n'
 
 : >"$command_log"
 if FAKE_BACKUP_FAILURE=yes FAKE_HERMES_TAG=v2026.9.01 \
