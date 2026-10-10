@@ -304,7 +304,7 @@ def capture(root_arg, name):
                     finally:
                         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
                             signal.signal(signum, interrupted)
-            signal.alarm(1800)
+            signal.alarm(5400)
             manifest = {"format": FORMAT, "version": 1,
                         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "source": {"root": str(root), "container": name, "container_id": container_id, "profile": profile},

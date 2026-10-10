@@ -58,6 +58,12 @@ not other administration tools. A pause freezes container writers; this is a
 crash-consistent filesystem snapshot, not a coordinated transaction across
 external APIs or a guarantee of preserving an in-flight conversation.
 
+After unpause is confirmed, hashing, compression and transfer share a 90-minute
+deadline. This is not a limit on the entire task or the pause duration. The state
+snapshot command retains its separate 300-second timeout; container checks and
+unpause also take time. Slow transfers can still exceed the deadline and fail
+without publishing a final archive.
+
 On a failure the task attempts to release its own pause and remove temporary
 staging. It refuses an already paused container. If unpause fails, the task
 fails rather than declaring success: check the actual container state before

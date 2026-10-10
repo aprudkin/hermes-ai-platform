@@ -300,6 +300,51 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         self.assertNotEqual(self.verify(legacy).returncode, 0)
 
 
+    def test_slow_stream_budget_starts_after_unpause_without_extending_snapshot(self):
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        helper.BUNDLE_SOURCE = HELPER.read_text()
+        helper.RESTORE_GUIDE = self.guide.read_text()
+        for elapsed, succeeds in ((31 * 60, True), (91 * 60, False)):
+            with self.subTest(elapsed=elapsed):
+                armed = [0]
+                deadlines = []
+
+                def alarm(seconds):
+                    self.assertFalse((self.base / 'paused').exists())
+                    armed[0] = seconds
+                    deadlines.append(seconds)
+                    return 0
+
+                class SlowStream(io.BytesIO):
+                    def write(stream, data):
+                        if armed[0] and elapsed >= armed[0]:
+                            helper.interrupted(helper.signal.SIGALRM, None)
+                        return super().write(data)
+
+                output = SlowStream()
+                with mock.patch.dict(os.environ, self.env), \
+                     mock.patch.object(helper.signal, 'signal'), \
+                     mock.patch.object(helper.signal, 'alarm', side_effect=alarm), \
+                     mock.patch.object(helper.sys, 'stdout', mock.Mock(buffer=output)), \
+                     mock.patch.object(helper, 'run', wraps=helper.run) as commands:
+                    if succeeds:
+                        helper.capture(str(self.root), 'hermes')
+                    else:
+                        with self.assertRaises(helper.BundleError):
+                            helper.capture(str(self.root), 'hermes')
+                self.assertEqual(deadlines, [5400, 0])
+                snapshots = [call for call in commands.call_args_list if call.args[0][0] == 'tar']
+                self.assertEqual(len(snapshots), 1)
+                self.assertEqual(snapshots[0].kwargs['timeout'], 300)
+                self.assertFalse((self.base / 'paused').exists())
+                self.assertEqual(list(self.root.glob('.hermes-backup-*')), [])
+                if succeeds:
+                    bundle = self.base / 'slow-stream.tar.gz'
+                    bundle.write_bytes(output.getvalue())
+                    helper.verify(bundle)
+
     def test_stream_after_unpause_does_not_stage_another_compressed_bundle(self):
         # Incompressible data keeps the child blocked on its stdout pipe while
         # we observe staging; this is synchronization, not a timing sleep.
