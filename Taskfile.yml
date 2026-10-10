@@ -2,7 +2,7 @@ version: '3'
 
 tasks:
   hermes:backup:
-    desc: Create and verify a local archive of deployed Hermes data
+    desc: Create and verify a portable Hermes recovery bundle
     cmds:
       - ./scripts/hermes_backup.sh
 

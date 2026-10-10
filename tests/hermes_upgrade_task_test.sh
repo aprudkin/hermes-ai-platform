@@ -9,7 +9,6 @@ trap 'rm -rf "$fixture_root"' EXIT
 fake_bin="$fixture_root/bin"
 fixture_repo="$fixture_root/repo"
 command_log="$fixture_root/commands.log"
-remote_root="$fixture_root/remote"
 backup_dir="$fixture_root/backups"
 private_key="$fixture_root/luk"
 public_key="$fixture_root/luk.pub"
@@ -17,9 +16,13 @@ provider_env="$fixture_root/hermes.env"
 review_file="$fixture_root/compatibility-review.json"
 
 mkdir -p "$fake_bin" "$fixture_repo/scripts" "$fixture_repo/docker" \
-  "$fixture_repo/docs" "$fixture_repo/installer" "$remote_root/data"
+  "$fixture_repo/docs" "$fixture_repo/installer"
 cp "$repo_root/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_upgrade.sh"
 cp "$repo_root/scripts/hermes_backup.sh" "$fixture_repo/scripts/hermes_backup.sh"
+cp "$repo_root/scripts/hermes_backup_bundle.py" "$fixture_repo/scripts/hermes_backup_bundle.py"
+cp "$repo_root/docs/backup-restore.md" "$fixture_repo/docs/backup-restore.md"
+python3 "$repo_root/tests/hermes_backup_bundle_test.py" \
+  --fixture-bundle "$fixture_root/recovery-fixture.tar.gz"
 cp "$repo_root/docker/docker-compose.yml" "$fixture_repo/docker/docker-compose.yml"
 cp "$repo_root/README.md" "$fixture_repo/README.md"
 cp "$repo_root/docs/operations.md" "$fixture_repo/docs/operations.md"
@@ -42,13 +45,14 @@ PYTHON
 printf 'private fixture key\n' >"$private_key"
 printf 'public fixture key\n' >"$public_key"
 printf 'OPENROUTER_API_KEY=test-only-value\n' >"$provider_env"
-printf 'persistent state\n' >"$remote_root/data/state.txt"
 
 cat >"$fake_bin/ssh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-tar -C "$FAKE_REMOTE_ROOT" -cf - data | gzip -c
+cat >/dev/null
+[[ "${FAKE_BACKUP_FAILURE:-no}" != yes ]] || exit 23
+cat "$FAKE_RECOVERY_BUNDLE"
 FAKE
 
 cat >"$fake_bin/gh" <<'FAKE'
@@ -104,7 +108,8 @@ chmod +x "$fake_bin/ssh" "$fake_bin/gh" "$fake_bin/git" "$fake_bin/terraform" \
 run_upgrade() {
   PATH="$fake_bin:$PATH" \
     FAKE_COMMAND_LOG="$command_log" \
-    FAKE_REMOTE_ROOT="$remote_root" \
+    FAKE_RECOVERY_BUNDLE="$fixture_root/recovery-fixture.tar.gz" \
+    FAKE_BACKUP_FAILURE="${FAKE_BACKUP_FAILURE:-no}" \
     HERMES_BACKUP_DIR="$backup_dir" \
     HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
     HERMES_DEPLOY_SSH_USER=root \
@@ -119,13 +124,29 @@ run_upgrade() {
 }
 
 : >"$command_log"
+if FAKE_BACKUP_FAILURE=yes FAKE_HERMES_TAG=v2026.9.01 \
+  run_upgrade >"$fixture_root/backup-failure.out" 2>&1; then
+  fail "a failed recovery bundle must stop the upgrade"
+fi
+! grep -Eq '^(gh|git|installer) ' "$command_log" \
+  || fail "backup failure must prevent release lookup, push and deployment"
+printf 'PASS failed recovery bundle blocks the upgrade\n'
+
+: >"$command_log"
 FAKE_HERMES_TAG=v2026.8.27 run_upgrade >"$fixture_root/no-update.out"
 
 archives=("$backup_dir"/*.tar.gz)
 [[ "${#archives[@]}" -eq 1 ]] \
   || fail "the no-update path must create exactly one backup archive"
-tar --list --gzip --file "${archives[0]}" | grep -qx 'data/state.txt' \
-  || fail "the backup archive must contain the persistent Hermes data"
+python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}"
+python3 - "${archives[0]}" <<'PYTHON'
+import sys
+import tarfile
+with tarfile.open(sys.argv[1], 'r:gz') as bundle:
+    with tarfile.open(fileobj=bundle.extractfile('state.tar'), mode='r|') as state:
+        names = {member.name.rstrip('/') for member in state}
+assert {'data/config.yaml', 'app/docker-compose.yml', 'app/gateway.env'} <= names
+PYTHON
 [[ "$(sed -n '1p' "$command_log")" == ssh\ * ]] \
   || fail "the backup must run before the upstream release lookup"
 ! grep -q '^git ' "$command_log" \

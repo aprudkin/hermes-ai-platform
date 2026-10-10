@@ -7,185 +7,123 @@ source "$(dirname "${BASH_SOURCE[0]}")/test_helper.sh"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "$fixture_root"' EXIT
 fake_bin="$fixture_root/bin"
-remote_root="$fixture_root/remote"
-remote_bin="$fixture_root/remote-bin"
-remote_state="$fixture_root/remote-state"
-remote_command_log="$fixture_root/remote-commands.log"
 backup_dir="$fixture_root/backups"
-private_key="$fixture_root/luk"
 command_log="$fixture_root/commands.log"
-remote_script="$fixture_root/remote-script.sh"
-
-file_mode() {
-  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
-}
-
-mkdir -p "$fake_bin" "$remote_bin" "$remote_root/data/profiles/manager"
+private_key="$fixture_root/luk"
+mkdir -p "$fake_bin" "$backup_dir"
 printf 'private fixture key\n' >"$private_key"
-printf 'running\n' >"$remote_state"
-printf 'session fixture\n' >"$remote_root/data/profiles/manager/session.json"
+
+python3 - "$fixture_root" <<'PYTHON'
+import gzip
+import io
+from pathlib import Path
+import sys
+import tarfile
+
+root = Path(sys.argv[1])
+with tarfile.open(root / "legacy.tar.gz", "w:gz") as archive:
+    value = b"persistent fixture state\n"
+    info = tarfile.TarInfo("data/state.txt")
+    info.size = len(value)
+    archive.addfile(info, io.BytesIO(value))
+(root / "bad-tar.gz").write_bytes(gzip.compress(b"not a tar archive"))
+PYTHON
 
 cat >"$fake_bin/ssh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-cat >"$FAKE_REMOTE_SCRIPT"
-grep -q 'docker inspect --format' "$FAKE_REMOTE_SCRIPT"
-grep -q 'docker pause hermes' "$FAKE_REMOTE_SCRIPT"
-grep -q 'docker unpause hermes' "$FAKE_REMOTE_SCRIPT"
-grep -q 'tar --numeric-owner --xattrs --acls -C /opt/hermes -czf - data' "$FAKE_REMOTE_SCRIPT"
-[[ "${FAKE_SSH_MODE:-success}" == success ]] || exit 23
-set +e
-PATH="$FAKE_REMOTE_BIN:$PATH" \
-  FAKE_REMOTE_STATE="$FAKE_REMOTE_STATE" \
-  FAKE_REMOTE_COMMAND_LOG="$FAKE_REMOTE_COMMAND_LOG" \
-  FAKE_REMOTE_PAUSE_STATUS="${FAKE_REMOTE_PAUSE_STATUS:-0}" \
-  FAKE_REMOTE_UNPAUSE_STATUS="${FAKE_REMOTE_UNPAUSE_STATUS:-0}" \
-  FAKE_REMOTE_TAR_MODE="${FAKE_REMOTE_TAR_MODE:-success}" \
-  bash "$FAKE_REMOTE_SCRIPT" >/dev/null
-remote_status=$?
-set -e
-[[ "$remote_status" -eq 0 ]] || exit "$remote_status"
-python3 - "$FAKE_REMOTE_ROOT" <<'PYTHON'
-import sys
-import tarfile
-
-with tarfile.open(fileobj=sys.stdout.buffer, mode="w:gz") as archive:
-    archive.add(f"{sys.argv[1]}/data", arcname="data")
-PYTHON
-FAKE
-
-cat >"$remote_bin/docker" <<'FAKE'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'docker %s\n' "$*" >>"$FAKE_REMOTE_COMMAND_LOG"
-case "${1:-}" in
-  inspect)
-    case "${3:-}" in
-      '{{.State.Running}}') printf 'true\n' ;;
-      '{{.State.Paused}}') [[ "$(<"$FAKE_REMOTE_STATE")" == paused ]] && printf 'true\n' || printf 'false\n' ;;
-      *) exit 2 ;;
-    esac
-    ;;
-  pause)
-    printf 'paused\n' >"$FAKE_REMOTE_STATE"
-    exit "$FAKE_REMOTE_PAUSE_STATUS"
-    ;;
-  unpause)
-    printf 'running\n' >"$FAKE_REMOTE_STATE"
-    exit "$FAKE_REMOTE_UNPAUSE_STATUS"
-    ;;
-  *) exit 2 ;;
+cat >"$FAKE_FIXTURE_ROOT/remote-program.py"
+case "$FAKE_SSH_MODE" in
+  success) cat "$FAKE_FIXTURE_ROOT/valid.tar.gz" ;;
+  legacy) cat "$FAKE_FIXTURE_ROOT/legacy.tar.gz" ;;
+  bad-tar) cat "$FAKE_FIXTURE_ROOT/bad-tar.gz" ;;
+  corrupt) printf 'not gzip\n' ;;
+  empty) : ;;
+  failure) exit 23 ;;
+  partial) head -c 80 "$FAKE_FIXTURE_ROOT/legacy.tar.gz"; exit 24 ;;
+  *) exit 99 ;;
 esac
-FAKE
-
-cat >"$remote_bin/tar" <<'FAKE'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'tar\n' >>"$FAKE_REMOTE_COMMAND_LOG"
-[[ "$FAKE_REMOTE_TAR_MODE" == success ]]
 FAKE
 
 cat >"$fake_bin/terraform" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'terraform %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-[[ "$*" == *"output -raw server_ipv4"* ]] \
-  || { printf 'unexpected terraform command: %s\n' "$*" >&2; exit 1; }
+[[ "$*" == *"output -raw server_ipv4"* ]] || exit 2
 printf '%s\n' 203.0.113.44
 FAKE
-
-chmod +x "$fake_bin/ssh" "$fake_bin/terraform" "$remote_bin/docker" "$remote_bin/tar"
+chmod +x "$fake_bin/ssh" "$fake_bin/terraform"
 
 run_backup() {
   PATH="$fake_bin:$PATH" \
     FAKE_COMMAND_LOG="$command_log" \
-    FAKE_REMOTE_ROOT="$remote_root" \
-    FAKE_REMOTE_SCRIPT="$remote_script" \
-    FAKE_REMOTE_BIN="$remote_bin" \
-    FAKE_REMOTE_STATE="$remote_state" \
-    FAKE_REMOTE_COMMAND_LOG="$remote_command_log" \
-    FAKE_REMOTE_PAUSE_STATUS="${FAKE_REMOTE_PAUSE_STATUS:-0}" \
-    FAKE_REMOTE_UNPAUSE_STATUS="${FAKE_REMOTE_UNPAUSE_STATUS:-0}" \
-    FAKE_REMOTE_TAR_MODE="${FAKE_REMOTE_TAR_MODE:-success}" \
+    FAKE_FIXTURE_ROOT="$fixture_root" \
     FAKE_SSH_MODE="${FAKE_SSH_MODE:-success}" \
     HERMES_BACKUP_DIR="$backup_dir" \
     HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
-    HERMES_DEPLOY_SSH_USER=ubuntu \
+    HERMES_DEPLOY_SSH_USER=root \
     HERMES_DEPLOY_SSH_PRIVATE_KEY="$private_key" \
     "$repo_root/scripts/hermes_backup.sh"
 }
 
+archive_count() {
+  find "$backup_dir" -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' '
+}
+
+expect_failure() {
+  local mode="$1" before
+  before="$(archive_count)"
+  if FAKE_SSH_MODE="$mode" run_backup >"$fixture_root/$mode.out" 2>&1; then
+    fail "$mode input must not be published as a complete recovery bundle"
+  fi
+  [[ "$(archive_count)" == "$before" ]] || fail "$mode left a final archive"
+  ! grep -q 'Backup verified:' "$fixture_root/$mode.out" \
+    || fail "$mode printed a success message"
+  [[ -z "$(find "$backup_dir" -maxdepth 1 -name '.hermes-*' -print -quit)" ]] \
+    || fail "$mode left temporary backup files"
+}
+
+# A gzip-readable data-only archive is not sufficient for portable recovery.
+expect_failure legacy
+printf 'PASS data-only archives cannot masquerade as complete recovery bundles\n'
+
+python3 "$repo_root/tests/hermes_backup_bundle_test.py" \
+  --fixture-bundle "$fixture_root/valid.tar.gz"
 : >"$command_log"
 run_backup >"$fixture_root/success.out"
-archives=("$backup_dir"/*.tar.gz)
-[[ "${#archives[@]}" -eq 1 ]] || fail "a successful run must create one archive"
-tar --list --gzip --file "${archives[0]}" | grep -qx 'data/profiles/manager/session.json' \
-  || fail "the archive must contain persistent Hermes data"
-[[ "$(file_mode "${archives[0]}")" == 600 ]] \
-  || fail "the archive containing credentials must have mode 0600"
-[[ "$(<"$remote_state")" == running ]] \
-  || fail "a successful backup must unpause the remote container"
-grep -q 'Backup verified:' "$fixture_root/success.out" \
-  || fail "success must be reported only after archive verification"
-! grep -q '^terraform ' "$command_log" \
-  || fail "an explicitly supplied host must not need Terraform"
-printf 'PASS backup task creates and verifies a protected archive\n'
+archives=("$backup_dir"/hermes-recovery-*.tar.gz)
+[[ "${#archives[@]}" -eq 1 && -f "${archives[0]}" ]] || fail "expected one recovery bundle"
+python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}"
+python3 - "${archives[0]}" <<'PYTHON'
+from pathlib import Path
+import stat
+import sys
+assert stat.S_IMODE(Path(sys.argv[1]).stat().st_mode) == 0o600
+PYTHON
+grep -q 'Backup verified:' "$fixture_root/success.out" || fail "missing verified success"
+grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes' "$command_log" \
+  || fail "SSH must execute the capture helper against the fixed project runtime"
+python3 - "$fixture_root/remote-program.py" <<'PYTHON'
+from pathlib import Path
+import sys
+compile(Path(sys.argv[1]).read_text(), '<remote-program>', 'exec')
+PYTHON
+! grep -q '^terraform ' "$command_log" || fail "explicit host must not require Terraform"
+printf 'PASS protected complete bundle is verified before publication\n'
 
-: >"$command_log"
-if FAKE_SSH_MODE=failure run_backup >"$fixture_root/failure.out" 2>&1; then
-  fail "an SSH transfer failure must fail the backup task"
-fi
-[[ "$(find "$backup_dir" -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" == 1 ]] \
-  || fail "a failed transfer must not leave a final archive"
-[[ -z "$(find "$backup_dir" -maxdepth 1 -type f -name '.hermes-data-*' -print -quit)" ]] \
-  || fail "a failed transfer must remove its temporary archive"
-printf 'PASS failed SSH transfer leaves no apparently valid backup\n'
-
-printf 'running\n' >"$remote_state"
-: >"$remote_command_log"
-if FAKE_REMOTE_PAUSE_STATUS=23 run_backup >"$fixture_root/pause-failure.out" 2>&1; then
-  fail "a pause command failure must fail the backup"
-fi
-grep -q '^docker unpause hermes$' "$remote_command_log" \
-  || fail "a failed pause request must trigger an unpause attempt"
-[[ "$(<"$remote_state")" == running ]] \
-  || fail "cleanup must recover a pause that took effect before reporting failure"
-printf 'PASS failed pause request attempts cleanup after partial effect\n'
-
-printf 'running\n' >"$remote_state"
-: >"$remote_command_log"
-if FAKE_REMOTE_TAR_MODE=failure run_backup >"$fixture_root/tar-failure.out" 2>&1; then
-  fail "a remote archive failure must fail the backup"
-fi
-grep -q '^docker unpause hermes$' "$remote_command_log" \
-  || fail "a remote archive failure must trigger unpause"
-[[ "$(<"$remote_state")" == running ]] \
-  || fail "a remote archive failure must leave the container unpaused"
-printf 'PASS archive failure still unpauses the remote container\n'
-
-printf 'running\n' >"$remote_state"
-if FAKE_REMOTE_UNPAUSE_STATUS=24 run_backup >"$fixture_root/unpause-failure.out" 2>&1; then
-  fail "a failed unpause must fail the backup"
-fi
-printf 'PASS unpause failure is reported as backup failure\n'
-
-printf 'paused\n' >"$remote_state"
-: >"$remote_command_log"
-if run_backup >"$fixture_root/prepaused.out" 2>&1; then
-  fail "backup must refuse to take ownership of an already paused container"
-fi
-! grep -q '^docker unpause hermes$' "$remote_command_log" \
-  || fail "backup must not unpause a container that was already paused"
-printf 'PASS pre-paused container is refused without unpausing it\n'
-printf 'running\n' >"$remote_state"
+for mode in failure partial empty corrupt bad-tar legacy; do
+  expect_failure "$mode"
+done
+[[ "$(archive_count)" == 1 ]] || fail "failed attempts must preserve the previous backup"
+printf 'PASS bad transfers and archives fail without deleting previous good backups\n'
 
 : >"$command_log"
 HERMES_DEPLOY_HOST='' run_backup >"$fixture_root/terraform-host.out"
 grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" \
-  || fail "an omitted host must resolve from local Terraform state"
-grep -q 'ubuntu@203.0.113.44' "$command_log" \
-  || fail "the backup must use the resolved host"
+  || fail "omitted host must resolve from local Terraform state"
+grep -q 'root@203.0.113.44' "$command_log" || fail "resolved host was not used"
+[[ "$(archive_count)" == 2 ]] || fail "successive backups must remain distinct"
 printf 'PASS omitted host resolves from Terraform state\n'
 
 task --taskfile "$repo_root/Taskfile.yml" --dry hermes:backup \

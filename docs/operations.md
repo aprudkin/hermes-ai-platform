@@ -73,26 +73,45 @@ setting does not select an STT provider and is separate from the UI language.
 
 ## Hermes backups
 
-Run `task hermes:backup` to create one verified local archive of the deployed
-`/opt/hermes/data` state. The task uses `HERMES_DEPLOY_HOST` when set; otherwise
-it resolves the host from local Terraform state. Set `HERMES_DEPLOY_SSH_USER`
-and `HERMES_DEPLOY_SSH_PRIVATE_KEY` for the SSH connection. Archives default to
-`~/backup/hermer`; set `HERMES_BACKUP_DIR` to choose another local destination.
+Run `task hermes:backup` to create one verified portable recovery bundle for
+the supported single-container deployment. It includes `/opt/hermes/data`,
+`/opt/hermes/app`, the exact installed Docker image, effective runtime metadata,
+a standalone recovery Compose definition, and a manual recovery guide. This
+preserves server-side changes even when the controller's Git checkout differs.
 
-The remote container is paused while its data streams to the controller. Its
-cleanup trap attempts to unpause it when archiving finishes or fails. If that
-attempt fails, the task reports an error; check the remote container state before
-resuming service-dependent operations. The task verifies the gzip archive and
-tar index before publishing the final file. The archive contains persistent
-Hermes state, including credentials, so protect and transfer it accordingly.
-The command creates a backup on each invocation; it does not configure a
-schedule or retention policy.
+The task uses `HERMES_DEPLOY_HOST` when set; otherwise it resolves the host from
+local Terraform state. Set `HERMES_DEPLOY_SSH_USER` and
+`HERMES_DEPLOY_SSH_PRIVATE_KEY` for SSH. The controller requires Python 3; the
+server requires Python 3, Docker access and GNU tar. Bundles default to
+`~/backup/hermer/hermes-recovery-<timestamp>-<pid>.tar.gz`; set
+`HERMES_BACKUP_DIR` to choose another local destination.
+
+One image export and one state snapshot are staged privately on the server.
+The free-space check covers those files and metadata overhead, not multiple
+copies. Compression streams to the controller, which verifies the transfer
+using temporary uncompressed payloads before publishing the final archive.
+The container is paused only while the state snapshot is written locally,
+then unpaused before compression and network transfer. Cleanup attempts to release its owned pause on failure. A failed
+unpause is an error; check the actual container state before continuing. Do not
+deploy or edit server state concurrently with a backup.
+
+Before publishing the mode-0600 final archive, the task verifies the bundle
+format, required recovery contents and payload hashes. This is not proof of a
+successful live restore. The bundle contains credentials and is not encrypted;
+protect its storage and transfer. It does not copy the entire host, controller
+SSH keys, Terraform state or external service settings, and does not configure
+a schedule, retention, automatic restore or cloud storage. Legacy data-only
+archives are not complete recovery bundles.
+
+See [Portable Hermes backup and manual recovery](backup-restore.md) for the
+contents, resource requirements, verification, restoration steps and single-owner
+Telegram/scheduled-job cutover. The same guide is bundled as `RESTORE.md`.
 
 ## Hermes image updates
 
-`task hermes:update` first runs the same verified backup workflow for the
-persistent remote `/opt/hermes/data` state, then contacts GitHub for the latest
-stable `nousresearch/hermes-agent` release.
+`task hermes:update` first creates the same verified portable recovery bundle,
+including the current image and deployed app/data state, then contacts GitHub
+for the latest stable `nousresearch/hermes-agent` release.
 
 The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
 `HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
