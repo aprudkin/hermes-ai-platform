@@ -20,6 +20,12 @@ jobs:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
+      - name: Install Task
+        uses: go-task/setup-task@v2
+        with:
+          version: 3.42.1
+          checksum: 05b41f97e655f56cc8a7617106622dbfb5f647d13ec6013ff7719bc80b52746c
+
       - name: Install local validation dependencies
         run: |
           sudo apt-get update
