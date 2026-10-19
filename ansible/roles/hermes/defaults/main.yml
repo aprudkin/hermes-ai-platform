@@ -44,11 +44,14 @@ hermes_model_tty_command: >-
   --env CODEX_HOME={{ hermes_codex_home }}
   {{ hermes_container_name }} hermes model
 hermes_restart_enabled: true
+# Preserve runtime-owned identities on ordinary redeploys. Explicit replacement
+# backs up each old SOUL.md and requires source-exact verification.
+hermes_replace_profile_identities: false
 hermes_env_source: ""
 hermes_codex_auth_source: ""
 hermes_profiles:
   - name: manager
-    description: Coordinates outcomes, work state, and verification.
+    description: Chebi; independent conversation and practical work.
   - name: devops
     description: Operates infrastructure with guarded changes and runtime proof.
   - name: coding

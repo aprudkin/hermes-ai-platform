@@ -80,6 +80,12 @@
     owner: "{{ hermes_runtime_owner }}"
     group: "{{ hermes_runtime_group }}"
     mode: "0640"
+    force: >-
+      {{ (hermes_replace_profile_identities | default(false) | bool) or
+         (hermes_profile_queries.results |
+          selectattr('item.name', 'equalto', item.name) |
+          selectattr('rc', 'equalto', 1) | list | length > 0) }}
+    backup: true
   loop: "{{ hermes_profiles }}"
   notify: Restart Hermes
 

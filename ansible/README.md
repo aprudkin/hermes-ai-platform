@@ -7,6 +7,15 @@ the default profile's supported config and skills, then receive synchronized
 mode-0600 credentials, distinct `SOUL.md` identities, and independent
 memory/session stores.
 
+### Runtime-owned identities
+
+Ordinary redeploys preserve existing `SOUL.md` files. New profiles receive their
+repository template, replacing any cloned seed; a missing identity is also
+initialized. Explicit Ansible `hermes_replace_profile_identities=true` replaces
+existing identities with backups and enables exact-source verification. The
+default is false: locally edited nonempty regular identity files are legitimate,
+not deployment drift to overwrite. See [the state-first contract](../docs/state-first.md).
+
 The play requires explicit `hermes_model_provider` and `hermes_model` values.
 API-key providers use `hermes_env_source`, a controller-local mode-0400/0600
 file based on `configs/hermes.env.example`. The `openai-codex` provider instead
