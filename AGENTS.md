@@ -36,6 +36,9 @@
 - `docker/docker-compose.yml` owns the official image pin and loopback health
   contract. `profiles/*/SOUL.md` supplies runtime identities, not Pi skills.
   `scripts/telegram_env.py` validates protected Telegram input.
+- Preserve runtime-owned personal instructions on ordinary redeploys. Read
+  `docs/state-first.md` before changing identity ownership, backup or migration
+  behavior. Template synchronization must not silently erase a live identity.
 - For image/provider pin changes, review upstream release notes and the
   contracts linked from `README.md`; preserve the Terraform dependency lock.
   `terraform/.terraform.lock.hcl` is maintained by `terraform init`.

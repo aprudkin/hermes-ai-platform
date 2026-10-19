@@ -4,6 +4,21 @@ This repository implements a small, reproducible deployment of one official
 Hermes Agent container on Ubuntu 24.04. The Minimal deployment was applied to
 Hetzner `hel1` and verified end to end on 2026-08-18.
 
+## Current operating model: preserve state first
+
+This installation now prioritizes one persistent agent environment, independent
+backups and a deliberate migration path over expansion into a larger platform.
+The active profile's personal instructions and data are runtime-owned; ordinary
+deployment must not reset them to repository templates. The manager template
+records the reviewed Chebi identity. Terraform/Ansible remain optional bootstrap
+and recovery tools, not the source of truth for every live personal edit.
+
+See [state ownership, instructions and migration](docs/state-first.md),
+[personal-state backup](docs/personal-backup.md) and
+[full recovery](docs/backup-restore.md). Existing backup archives contain secrets
+and are not encrypted by these scripts; an independent destination and an actual
+restore check are still required before claiming recoverability.
+
 ## What Minimal implements
 
 - Hetzner Terraform for one VPS in selected Finland location `hel1`;

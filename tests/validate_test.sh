@@ -47,6 +47,10 @@ cp -R "$repo_root/." "$fixture_root/repo"
 limited_bin="$fixture_root/limited-bin"
 mkdir -p "$limited_bin"
 ln -s "$(command -v rg)" "$limited_bin/rg"
+# This fixture hides only the four tools below. Keep real Task available even
+# when the setup action installed it outside Python's directory and /usr/bin.
+command -v task >/dev/null 2>&1 || fail "Go Task is required for validator behavior tests"
+ln -s "$(command -v task)" "$limited_bin/task"
 for unavailable_command in shellcheck terraform ansible-playbook docker; do
   cat >"$limited_bin/$unavailable_command" <<'FAKE'
 #!/usr/bin/env bash
