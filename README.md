@@ -1,124 +1,116 @@
-# Hermes AI Platform — Minimal
+# Hermes: one persistent agent
 
-This repository implements a small, reproducible deployment of one official
-Hermes Agent container on Ubuntu 24.04. The Minimal deployment was applied to
-Hetzner `hel1` and verified end to end on 2026-08-18.
+This repository maintains **one working Hermes Agent**, its private state and
+its recovery path. The current `manager` identity is **Чеби (Chebi)**, not a
+fresh task-manager template. Container recreation must preserve that identity,
+memory, history, skills, applications and job settings.
 
-## Current operating model: preserve state first
+The operating cycle is: **maintain → back up off-server → verify → rehearse
+recovery → deliberately update or move**. Terraform and Ansible are supporting
+bootstrap/deployment tools, not a roadmap to a larger infrastructure platform.
+There is no requirement to add databases, Redis, monitoring or more agents.
 
-This installation now prioritizes one persistent agent environment, independent
-backups and a deliberate migration path over expansion into a larger platform.
-The active profile's personal instructions and data are runtime-owned; ordinary
-deployment must not reset them to repository templates. The manager template
-records the reviewed Chebi identity. Terraform/Ansible remain optional bootstrap
-and recovery tools, not the source of truth for every live personal edit.
+## Start with the existing installation
 
-See [state ownership, instructions and migration](docs/state-first.md),
-[personal-state backup](docs/personal-backup.md) and
-[full recovery](docs/backup-restore.md). Existing backup archives contain secrets
-and are not encrypted by these scripts; an independent destination and an actual
-restore check are still required before claiming recoverability.
+- [State boundaries and identity ownership](docs/state-first.md): what belongs
+  to the running agent, what belongs in Git, and PR #40's identity guarantees.
+- [Operations](docs/operations.md): maintenance, controlled updates and Telegram
+  acceptance controls. Inspection is not permission to restart or deploy.
+- [Personal backup](docs/personal-backup.md): routine private state, excluding
+  the runtime image and recognized dependency/cache trees.
+- [Full recovery](docs/backup-restore.md): exact image plus state/dependencies,
+  offline restoration, isolated checks, cutover and rollback boundaries.
 
-## What Minimal implements
+The normal persistent mount is `/opt/hermes/data` on the host → `/opt/data` in
+the container. `/opt/hermes/app` contains deployed Compose/gateway configuration.
+Files created only in the container's writable layer are **not durable state**;
+full backup refuses unsupported customizations rather than silently losing them.
 
-- Hetzner Terraform for one VPS in selected Finland location `hel1`;
-- explicit server-type selection with live plan-time checks for Hetzner's
-  cost-optimized or regular-purpose category, location availability,
-  recommendation, and deprecation;
-- reuse and fail-closed comparison of an existing Hetzner SSH public key;
-- an ingress firewall allowing SSH and ICMP only from configured CIDRs;
-- a separate existing-host path that creates no cloud resources;
-- Ubuntu hardening, Docker installation, and deployment through Ansible;
-- one pinned official `nousresearch/hermes-agent:v2026.9.14` container ([upstream release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14));
-- persistent Hermes state at `/opt/hermes/data`, with no public service port;
-- a real loopback gateway health check;
-- explicit provider/model configuration and a post-deploy inference probe;
-- protected reuse of an existing Codex CLI ChatGPT-subscription login through
-  Hermes' supported `openai-codex` provider, without an OpenAI API key;
-- Manager, DevOps, Coding, and Research as supported Hermes profiles inside
-  that one container, each with its own SOUL, sessions, skills, and memory;
-- an optional, profile-scoped Telegram long-polling gateway for explicit users
-  and groups, with one gateway process and no webhook or inbound listener;
-- fail-closed installer modes, behavioral tests, static validation, and CI.
+## Main commands
 
-Postgres, Redis, DNS, a dashboard, public API exposure, a private Hetzner
-network, monitoring, automated restore, and stages 05–31 are not part of
-Minimal.
+Run from this checkout on the owner's computer or another explicitly selected
+independent controller. See the backup guides for SSH access, authorization,
+protected storage and space requirements **before** running a capture.
 
-## Safe entry points
+| Command | Result / boundary |
+| --- | --- |
+| `task backup:hermes` | Capture personal state over SSH; briefly pauses the live container; verify the received archive |
+| `task backup:hermes:full` | Capture state, retained dependencies and exact image for recovery/migration |
+| `task verify:hermes` | Locally verify the trusted archive named by `HERMES_BACKUP_FILE`; no server access |
+| `task restore:hermes:state` | Restore and compare files into a **new** `HERMES_RESTORE_DIR` on compatible Linux; requires `HERMES_BACKUP_FILE`; never starts Hermes |
+| `task update:hermes` | Back up, review and validate a candidate image pin **only**; no commit/push/deployment |
+| `./installer/install.sh validate` | Strict repository checks including behavioral tests; not a live recovery test |
 
-Run the strict validation gate (all required native tools must be runnable):
+`task --list` shows the commands. Existing aliases `b:hermes`, `hermes:backup`
+and `hermes:update` remain. **Update behavior intentionally changed:** automatic
+commit/push/deploy was removed; legacy `CONFIRM_PUSH` / `CONFIRM_DEPLOY` flags
+are rejected. A matching local image pin is not proof of a successful deployment
+and returns a non-success result with explicit retry guidance.
 
-```bash
-./installer/install.sh validate
-```
+`HERMES_DEPLOY_HOST` selects the SSH destination. Standalone backup defaults to
+an operator-configured `hermes-minimal` SSH alias. `HERMES_BACKUP_DIR` chooses
+where the controller saves archives (legacy default: `~/backup/hermer`). Choose
+a private directory on the owner's encrypted disk or an approved encrypted
+external volume; no disk encryption, cloud account or upload is provisioned.
+A controller **on the same server** is not an independent backup.
 
-Use `./scripts/validate.sh --local` only for an opportunistic workstation pass.
-It reports unavailable native tools as `SKIP` and therefore is not readiness
-proof.
+The `.tar.gz` archives contain secrets and **are not encrypted by these tools**.
+Mode `0600` is access control, not encryption. Keep credentials for the backup
+storage and recovery instructions available independently of the old server.
+See [independent storage](docs/personal-backup.md#independent-storage-and-recovery-kit).
 
-Plan a new server without applying it (requires `HCLOUD_TOKEN` in the process
-environment and the already registered key name):
+## Recovery and migration acceptance
 
-```bash
-./installer/install.sh plan new --location hel1 --server-type cpx22 --hcloud-ssh-key-name Luk --ssh-public-key ~/.ssh/luk.pub --ssh-source-cidr 203.0.113.10/32
-```
+1. Create and verify a trusted independent copy; retain access to its storage.
+2. Prepare a compatible clean target, restore files without starting the agent.
+3. Inspect identity, memory/history, databases, dependencies and job definitions
+   offline. Rehearse runtime only with external networking blocked and jobs
+   disabled; a second host alone is not isolation.
+4. Keep cancelled reports and mail monitoring disabled, even if an older archive
+   contains them. Only explicitly approved jobs may resume.
+5. Fence/stop the old installation before authorizing the new one to own Telegram
+   keys and jobs. Never run both with production credentials.
+6. Verify actual behavior after cutover; retain the stopped old installation and
+   the backup until the owner accepts the result. No automatic destructive cleanup.
 
-`hel1` is the selected location. The `cpx22` choice follows the provider's
-regular-performance recommendation observed on 2026-08-17 and must be
-rechecked before any future apply.
-Replace the documentation-only CIDR with the actual operator network. See
-[QUICKSTART.md](QUICKSTART.md) for both modes and
-[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for the snapshot details and
-mutation boundary.
+Report evidence separately:
 
-## Upstream documentation
+| Claim | What establishes it |
+| --- | --- |
+| Archive created | Capture and transfer completed |
+| Structure/integrity verified | Verifier checked schema, boundaries and hashes |
+| Data restored | Extraction without diagnostics and file/basic-stat comparison completed; required ACL/xattr readback checked separately |
+| Working restored installation verified | Isolated runtime checks, then separately authorized functional checks after cutover |
 
-- [Hermes installation](https://hermes-agent.nousresearch.com/docs/getting-started/installation)
-- [Hermes Docker layout and health endpoint](https://hermes-agent.nousresearch.com/docs/user-guide/docker)
-- [Hermes profile commands](https://hermes-agent.nousresearch.com/docs/reference/profile-commands)
-- [Hermes providers, including OpenAI Codex OAuth](https://hermes-agent.nousresearch.com/docs/integrations/providers)
-- [Hermes Codex app-server runtime](https://hermes-agent.nousresearch.com/docs/user-guide/features/codex-app-server-runtime)
-- [Using Codex with a ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
-- [Hetzner Terraform provider](https://github.com/hetznercloud/terraform-provider-hcloud)
-- [Hetzner server-type data source](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs/data-sources/server_type)
+None implies the next. Repository fixture tests do not establish recovery of
+the owner's actual installation. `--local` validation may skip unavailable
+tools and is not strict readiness evidence. Historical deployment records are
+not current health or Telegram verification.
+
+## Supporting tools and historical scope
+
+[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), [QUICKSTART.md](QUICKSTART.md),
+[architecture](docs/architecture.md), [Ansible](ansible/README.md) and
+[Terraform](terraform/README.md) remain useful for explicitly requested host
+preparation or deployment. **Do not run the full installer over recovered state**:
+it reconciles selected configuration/credentials rather than restoring verbatim.
+
+The old Minimal/Optimal/Advanced/Maximum levels, `PROJECT_AUDIT.md`,
+`CODEX_SETUP_PROMPT.md`, `CODEX_CLI_START.md` and stage prompts describe earlier
+planning. They are not the current backlog and do not authorize implementation.
+The DevOps/Coding/Research profile templates remain for compatibility, not as
+required separate services. No useful bootstrap code has been removed.
+
+## Upstream contracts
+
+The official image pin is in `docker/docker-compose.yml`; review its exact
+release notes before changing it. Do not infer availability from a historic tag.
+
+- [Hermes releases](https://github.com/NousResearch/hermes-agent/releases)
+- [Docker layout and health](https://hermes-agent.nousresearch.com/docs/user-guide/docker)
+- [Profiles](https://hermes-agent.nousresearch.com/docs/reference/profile-commands)
+- [Providers and Codex OAuth](https://hermes-agent.nousresearch.com/docs/integrations/providers)
+- [Codex app-server runtime](https://hermes-agent.nousresearch.com/docs/user-guide/features/codex-app-server-runtime)
+- [Telegram contract at the current pin](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
 - [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
-
-The image and provider are pinned in code. Review upstream release notes before
-changing either pin.
-
-## Telegram gateway source boundary
-
-Telegram uses a separate controller-local mode-`0400`/`0600` six-key file; it
-does not use `configs/hermes.env.example`. The source implementation accepts
-only explicit users crossed with explicit groups, requires a command, reply, or
-direct mention in groups, and retains Telegram privacy mode. The first intended
-production instance selects the `manager` profile, but `manager` is not a
-global default: ordinary Compose startup remains on `default`, and the
-installer accepts an explicit supported profile.
-
-The targeted plan, enable, and disable interfaces are documented in
-[QUICKSTART.md](QUICKSTART.md). Disable removes only the managed Telegram block,
-restores the retained pre-Telegram gateway profile, and recreates the single
-Hermes service. It preserves provider credentials, Codex auth, profiles,
-sessions, memory, API credentials, and rollback evidence.
-
-The gateway contract is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
-and [v2026.9.14 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14).
-Passing syntax, Compose configuration, container health, or a connected log
-marker is deployment evidence only; it is not Telegram behavioral proof.
-
-## Verification status
-
-On 2026-08-18, the authorized deployment created one `cpx22` server and one
-ingress firewall in `hel1`. A repeat Ansible run completed with `changed=0` and
-`failed=0`; independent verification observed a healthy container, exact
-profile identities, complete model configuration, and a successful one-shot
-inference through the ChatGPT subscription. Local Docker remains unavailable,
-so local `docker compose config` is still skipped; the live Docker runtime is
-the behavioral deployment evidence for the original Minimal deployment. The
-Telegram gateway has not been installed or behaviorally verified in production;
-host access, protected credential installation, service recreation, Bot API
-probes, visible messages, group-administrator changes, and GitHub mutation each
-remain separately authorized.
+- [Hetzner provider](https://github.com/hetznercloud/terraform-provider-hcloud)

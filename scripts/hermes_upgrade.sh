@@ -37,16 +37,18 @@ resolve_deploy_host() {
 
 
 backup_runtime_data() {
-  # Deployment still needs explicit credentials even though standalone backups
-  # can use SSH config. Reject missing inputs before any backup or later push.
+  # Retain explicit target credentials for the pre-upgrade recovery capture.
   require_var HERMES_DEPLOY_SSH_USER
   require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
   HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh" --full
 }
 
 read_pinned_tag() {
+  local tag
   local -a tags=()
-  mapfile -t tags < <(
+  while IFS= read -r tag; do
+    tags+=("$tag")
+  done < <(
     sed -nE \
       's#^[[:space:]]*image:[[:space:]]*nousresearch/hermes-agent:([^[:space:]#]+)[[:space:]]*$#\1#p' \
       "$compose_file"
@@ -152,65 +154,16 @@ path.write_text(content.replace(current_image, latest_image))
 PYTHON
 }
 
-require_deploy_configuration() {
-  require_var HERMES_DEPLOY_SSH_SOURCE_CIDR
-  require_file HERMES_DEPLOY_SSH_PUBLIC_KEY
-  require_var HERMES_MODEL_PROVIDER
-  require_var HERMES_MODEL
-
-  if [[ "$HERMES_MODEL_PROVIDER" == "openai-codex" ]]; then
-    require_file HERMES_CODEX_AUTH
-    [[ -z "${HERMES_ENV:-}" ]] \
-      || fail "HERMES_ENV must not be set for the openai-codex provider"
-  else
-    require_file HERMES_ENV
-    [[ -z "${HERMES_CODEX_AUTH:-}" ]] \
-      || fail "HERMES_CODEX_AUTH is supported only for the openai-codex provider"
-  fi
-}
-
-push_update() {
-  local latest_tag="$1"
-  local branch
-
-  [[ "${CONFIRM_PUSH:-}" == "yes" ]] \
-    || fail "set CONFIRM_PUSH=yes immediately before allowing a GitHub push"
-  branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD)" \
-    || fail "refusing to push from a detached HEAD"
-  git -C "$repo_root" add docker/docker-compose.yml
-  git -C "$repo_root" commit -m "chore: update Hermes Agent to $latest_tag"
-  git -C "$repo_root" push origin "$branch"
-}
-
-deploy_update() {
-  local -a deploy_args=(
-    deploy existing
-    --host "$HERMES_DEPLOY_HOST"
-    --ssh-user "$HERMES_DEPLOY_SSH_USER"
-    --ssh-public-key "$HERMES_DEPLOY_SSH_PUBLIC_KEY"
-    --ssh-private-key "$HERMES_DEPLOY_SSH_PRIVATE_KEY"
-    --ssh-source-cidr "$HERMES_DEPLOY_SSH_SOURCE_CIDR"
-    --model-provider "$HERMES_MODEL_PROVIDER"
-    --model "$HERMES_MODEL"
-    --confirm-external-mutation
-  )
-
-  [[ "${CONFIRM_DEPLOY:-}" == "yes" ]] \
-    || fail "set CONFIRM_DEPLOY=yes immediately before allowing a server deployment"
-  if [[ "$HERMES_MODEL_PROVIDER" == "openai-codex" ]]; then
-    deploy_args+=(--codex-auth "$HERMES_CODEX_AUTH")
-  else
-    deploy_args+=(--hermes-env "$HERMES_ENV")
-  fi
-  "$repo_root/installer/install.sh" "${deploy_args[@]}"
-}
-
 main() {
   local current_tag latest_tag
 
+  [[ "$#" -eq 0 ]] || fail "usage: hermes_upgrade.sh (prepare only; see docs/operations.md)"
+  [[ -z "${CONFIRM_PUSH:-}" && -z "${CONFIRM_DEPLOY:-}" ]] \
+    || fail "automatic push/deploy was retired; unset CONFIRM_PUSH/CONFIRM_DEPLOY and see docs/operations.md"
   require_command ssh
-  require_command gzip
-  require_command tar
+  require_command git
+  require_command python3
+  assert_clean_worktree
   resolve_deploy_host
 
   backup_runtime_data
@@ -221,17 +174,17 @@ main() {
   current_tag="$(read_pinned_tag)"
   latest_tag="$(read_latest_tag)"
   if [[ "$current_tag" == "$latest_tag" ]]; then
-    printf 'Hermes is already pinned to the latest stable release (%s); skipping push and deployment.\n' \
-      "$current_tag"
-    return
+    fail "local pin already matches $current_tag; live deployment is UNKNOWN, not a successful update. For deploy/retry use the explicit existing-host workflow in docs/operations.md"
   fi
 
   verify_compatibility_review "$latest_tag"
   assert_clean_worktree
-  require_deploy_configuration
   update_image_pin "$current_tag" "$latest_tag"
-  push_update "$latest_tag"
-  deploy_update
+  # Validate the candidate, not merely the old pin attested in the review.
+  # On failure leave the diff for inspection; a retry fails the clean-tree gate.
+  "$repo_root/installer/install.sh" validate
+  printf 'Prepared and locally validated pin %s. NOT committed, pushed or deployed.\n' "$latest_tag"
+  printf 'Review the diff, publish separately, then authorize an explicit deployment; see docs/operations.md.\n'
 }
 
 main "$@"

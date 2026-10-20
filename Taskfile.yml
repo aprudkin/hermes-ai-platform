@@ -7,8 +7,23 @@ tasks:
     cmds:
       - ./scripts/hermes_backup.sh
 
+  backup:hermes:full:
+    desc: Capture state, dependencies and exact image for recovery (remote pause)
+    cmds:
+      - ./scripts/hermes_backup.sh --full
+
+  verify:hermes:
+    desc: Verify HERMES_BACKUP_FILE locally; no restore or server access
+    cmds:
+      - python3 scripts/hermes_backup_bundle.py verify "${HERMES_BACKUP_FILE:?Set HERMES_BACKUP_FILE to a trusted archive}"
+
+  restore:hermes:state:
+    desc: Restore HERMES_BACKUP_FILE into new HERMES_RESTORE_DIR on Linux; never start Hermes
+    cmds:
+      - python3 scripts/hermes_backup_bundle.py restore-state "${HERMES_BACKUP_FILE:?Set HERMES_BACKUP_FILE}" "${HERMES_RESTORE_DIR:?Set HERMES_RESTORE_DIR to a new absolute directory}"
+
   update:hermes:
     aliases: ['hermes:update']
-    desc: Back up Hermes, pin the latest stable release, push, and deploy
+    desc: Back up and prepare a validated image pin; never commit, push or deploy
     cmds:
       - ./scripts/hermes_upgrade.sh

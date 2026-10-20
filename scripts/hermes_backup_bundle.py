@@ -49,11 +49,16 @@ def require(condition, message):
         raise BundleError(message)
 
 
-def run(args, timeout=60):
+def run(args, timeout=60, reject_diagnostics=False):
     # Neither Docker inspect output nor command stderr may reach the terminal.
     try:
-        return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              check=True, timeout=timeout).stdout
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                check=True, timeout=timeout)
+        # GNU tar can warn about failed ACL/xattr writes and still exit zero.
+        # Restore is fail-closed even for such warnings, without leaking paths.
+        require(not reject_diagnostics or not (result.stdout or result.stderr),
+                "restore diagnostics reported; destination is incomplete (details withheld)")
+        return result.stdout
     except (subprocess.SubprocessError, OSError):
         raise BundleError("external command failed or timed out") from None
 
@@ -681,6 +686,44 @@ def verify(bundle, scope=None):
     return manifest
 
 
+def restore_state(bundle, destination):
+    """Restore trusted bytes only; never load images, run hooks or start services.
+
+    GNU tar retains numeric owners/ACLs/xattrs. Use a new compatible Linux target
+    and a trusted private parent; failures retain a partial destination for
+    inspection and must never be treated as a completed restore.
+    """
+    os.umask(0o077)
+    require(destination.is_absolute() and destination.parent.is_dir()
+            and destination.parent == destination.parent.resolve(),
+            "restore destination needs an absolute path and a real existing parent")
+    require(not os.path.lexists(destination), "restore destination already exists")
+    require(b"GNU tar" in run(["tar", "--version"]), "restore requires GNU tar on compatible Linux")
+    with tempfile.TemporaryDirectory(prefix="hermes-restore-") as tmp:
+        # Verify and consume the same private copy, not a mutable source path.
+        private = Path(tmp) / "bundle.tar.gz"
+        shutil.copyfile(bundle, private)
+        manifest = verify(private)
+        destination.mkdir(mode=0o700)  # exclusive; refuse a concurrently created target
+        recovery = destination / ".recovery"
+        recovery.mkdir(mode=0o700)
+        with tarfile.open(private, "r:gz") as archive:
+            for member in archive:
+                # verify() admitted only fixed regular outer payload names.
+                with archive.extractfile(member) as source, (recovery / member.name).open("xb") as out:
+                    shutil.copyfileobj(source, out)
+        run(["tar", "--extract", "--file", str(recovery / "state.tar"),
+             "--directory", str(destination), "--numeric-owner", "--same-owner",
+             "--same-permissions", "--acls", "--xattrs", "--xattrs-include=*"],
+            timeout=5400, reject_diagnostics=True)
+        # Compare bytes/basic stat metadata. GNU tar does not compare ACL/xattr
+        # values; extraction warnings above fail closed, but are not readback.
+        run(["tar", "--compare", "--file", str(recovery / "state.tar"),
+             "--directory", str(destination), "--numeric-owner"],
+            timeout=5400, reject_diagnostics=True)
+    return manifest
+
+
 def main():
     try:
         args = sys.argv[1:]
@@ -691,6 +734,9 @@ def main():
             sys.stdout.write("RESTORE_GUIDE = " + repr(guide) + "\nBUNDLE_SOURCE = " + repr(source) + "\n" + source)
         elif len(args) in (3, 4) and args[0] == "capture":
             capture(args[1], args[2], args[3] if len(args) == 4 else "full")
+        elif len(args) == 3 and args[0] == "restore-state":
+            restore_state(Path(args[1]), Path(args[2]))
+            print("Archive verified; state extracted and compared. Runtime NOT started or verified.")
         elif len(args) in (2, 3) and args[0] == "verify":
             manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None)
             if manifest["format"] == PERSONAL_FORMAT:
@@ -698,7 +744,7 @@ def main():
             else:
                 print("Recovery bundle integrity and structure verified; restore not tested.")
         else:
-            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full]")
+            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
         return 0
     except BundleError as error:
         # BundleError messages are fixed developer strings, never runtime data.

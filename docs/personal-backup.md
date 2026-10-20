@@ -46,6 +46,33 @@ untouched. There is no schedule, retention policy, automatic restore or upload.
 extracted files, and transfer it only to an authorized recipient over an
 encrypted connection. Never attach it to an issue or add it to Git.
 
+## Independent storage and recovery kit
+
+Run capture from the owner's computer, **not inside the container being paused**.
+Set `HERMES_DEPLOY_HOST` to the intended SSH alias/address and choose a private
+`HERMES_BACKUP_DIR` on that computer. Verify that it is not merely a mount of the
+old server. New archive files use `0600`; keep the containing directory private
+(`0700`) and protect both archive and temporary verification space with encrypted
+storage. The tools do not configure or verify disk encryption.
+
+Another destination may be an owner-approved encrypted external volume mounted
+on the controller, or a separately authorized remote storage service. For a
+mounted volume, point `HERMES_BACKUP_DIR` at a private directory on it. For remote
+storage, transfer only over authenticated encrypted transport and only after its
+access controls and encryption-at-rest/key-recovery arrangement are selected.
+No provider/account/key is assumed. Re-download/read the stored copy and run the
+verifier again; a successful upload alone is not verification. Keep at least one
+previous accepted copy until a replacement has passed verification and a restore
+rehearsal; these scripts do not delete old copies or schedule retention.
+
+Keep a recovery kit available **without the old server**: the archive, this guide
+and trusted verifier (also embedded in the bundle), access to the destination
+and its independently stored recovery credentials, target-host SSH access and
+provider/Telegram account recovery access. Test that the owner can access the
+copy from their computer. Never keep the only decryption/recovery credential in
+the state that needs restoring. Existing `.tar.gz` files remain unencrypted;
+permissions and SSH transport do not change that fact.
+
 ## What is retained
 
 The state snapshot contains filtered `/opt/hermes/data` and `/opt/hermes/app`
@@ -115,8 +142,16 @@ or a legacy data-only tar cannot masquerade as this format.
 
 To verify locally without contacting the server or starting Hermes:
 
+In Bash, select the actual trusted archive (the prompt reads a path, not a secret):
+
 ```bash
-python3 scripts/hermes_backup_bundle.py verify /secure/path/hermes-personal.tar.gz personal
+read -r -p 'Trusted backup archive path: ' HERMES_BACKUP_FILE && export HERMES_BACKUP_FILE
+```
+
+Then verify it locally:
+
+```bash
+task verify:hermes
 ```
 
 Hashes detect corruption, not a maliciously replaced backup. Use only a trusted
@@ -131,27 +166,29 @@ binaries. Do not start a second instance with the restored credentials while
 the source still owns Telegram polling or scheduled jobs.
 
 On the **new target**, with no existing `/opt/hermes` or `hermes` container,
-verify the trusted backup before extracting its state. In a root Bash shell:
+follow the [offline restoration entry point](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/backup-restore.md#restore-files-without-starting-hermes).
+It supports both personal and full formats. In a root Bash shell with a trusted
+checkout and `HERMES_BACKUP_FILE` set to the transferred archive, the current step is:
 
 ```bash
-set -euo pipefail
-umask 077
-BUNDLE=/secure/path/hermes-personal.tar.gz
-RECOVERY=$(mktemp -d /root/hermes-personal.XXXXXX)
-cd "$RECOVERY"
-tar -xOzf "$BUNDLE" verify.py > verify.py
-python3 verify.py verify "$BUNDLE" personal
-tar -xzf "$BUNDLE"
-test ! -e /opt/hermes
-docker info >/dev/null
-if docker container inspect hermes >/dev/null 2>&1; then
-  printf 'Refusing to overwrite an existing Hermes container\n' >&2
-  exit 1
-fi
-mkdir -m 0750 /opt/hermes
-tar --extract --file state.tar --directory /opt/hermes \
-  --numeric-owner --same-owner --same-permissions --acls --xattrs --xattrs-include='*'
+python3 scripts/hermes_backup_bundle.py restore-state "$HERMES_BACKUP_FILE" /opt/hermes
 ```
+
+This verifies a private copy, restores `app/` and `data/`, and compares file
+contents/basic stat metadata with the saved state using GNU tar. Any extraction
+or comparison diagnostic fails closed, including warning-only ACL/xattr writes.
+GNU tar does not compare ACL/xattr values; verify those separately with native
+target tools where required before runtime acceptance. It refuses any existing destination (including a
+symlink), retains recovery payloads in `/opt/hermes/.recovery`, and never contacts
+Docker or starts the gateway/jobs. An interrupted/failed extraction leaves a
+partial directory: retain it for inspection and choose a fresh destination for
+retry; do not treat it as restored. The command requires GNU tar and compatible
+Linux ownership/ACL/xattr support. It is not a running-container acceptance test.
+
+Allow space for the compressed private copy plus uncompressed verifier payloads
+in `TMPDIR`, and retained payloads **plus extracted state** at the destination.
+Use private encrypted storage for both locations. This deliberate duplication
+keeps original recovery evidence available through acceptance.
 
 Preserve numeric ownership, ACLs and attributes on a compatible Linux
 filesystem; do not recursively assign everything to one UID. Attribute errors
@@ -165,6 +202,11 @@ application dependencies. Review the saved Compose definition and install it
 as `/opt/hermes/app/compose.restore.json` with mode `0600`. Validate it with
 `docker compose --file /opt/hermes/app/compose.restore.json config --quiet`;
 this does not start Hermes or prove runtime behavior.
+
+Use `/opt/hermes/.recovery/compose.restore.json` as the saved definition.
+Before startup, review every restored scheduler/job definition against the owner's
+current decisions. Keep cancelled reports and mail monitoring disabled even if
+they appear in an older archive. See the full guide's isolated checks and cutover.
 
 Only after dependencies, single-owner cutover and external side effects have
 been separately authorized should the restored service be started. Starting

@@ -6,7 +6,8 @@ with `./scripts/hermes_backup.sh --full`. Ordinary `task backup:hermes` now save
 without an image or recognized caches/dependencies. This full guide covers one
 Hermes container on Ubuntu 24.04 or newer, using host networking and the single
 `/opt/hermes/data:/opt/data` bind mount. It is not a whole-server backup or an
-automated restore command. A successful backup verification does not establish
+automated service recovery/start command. The `restore-state` helper only restores
+and compares files; image loading, isolated runtime checks and cutover remain explicit. A successful backup verification does not establish
 that a live restore or the bot's integrations have been tested.
 
 ## Create a recovery bundle
@@ -14,10 +15,10 @@ that a live restore or the bot's integrations have been tested.
 Run from this repository on the controller, after authorizing a live backup:
 
 ```bash
-./scripts/hermes_backup.sh --full
+task backup:hermes:full
 ```
 
-The `--full` flag is required for this self-contained format. The ordinary task
+This task calls `./scripts/hermes_backup.sh --full`; the direct CLI remains supported. The ordinary task
 and its `b:hermes` / `hermes:backup` aliases create personal-state backups instead.
 The image-upgrade workflow explicitly uses full mode for its pre-upgrade backup.
 
@@ -40,8 +41,12 @@ without an interactive privilege prompt. The wrapper does not invoke `sudo`.
 The result is `hermes-recovery-<UTC timestamp>-<process id>.tar.gz`, mode `0600`.
 Only a completed and verified transfer receives that final name. Existing
 backups are retained; there is no schedule, retention policy or automatic upload.
-Legacy `hermes-data-*.tar.gz` files remain usable as data-only archives but do
-not satisfy the recovery-bundle verifier.
+Legacy `hermes-data-*.tar.gz` files remain data-only archives but do not satisfy
+the recovery-bundle verifier or `restore-state` contract. Preserve them; manually
+inspect/migrate them separately rather than bypassing the current verifier.
+See [independent storage and recovery kit](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/personal-backup.md#independent-storage-and-recovery-kit)
+for an owner-computer/external-volume workflow. A copy on the source server is
+not independent. Neither encrypted storage nor its recovery keys are provisioned.
 
 The task stages one saved Docker image and one data/app snapshot on the server.
 Its free-space estimate is their combined size, plus tar-entry overhead and a
@@ -120,8 +125,16 @@ bundle: use only a backup from a trusted source.
 
 On the controller, use the current repository verifier:
 
+In Bash, select the actual trusted archive first:
+
 ```bash
-python3 scripts/hermes_backup_bundle.py verify /secure/path/hermes-recovery.tar.gz
+read -r -p 'Trusted backup archive path: ' HERMES_BACKUP_FILE && export HERMES_BACKUP_FILE
+```
+
+Then run the local-only verification task:
+
+```bash
+task verify:hermes
 ```
 
 Verification checks the bundle format, required contents, payload hashes and
@@ -164,30 +177,66 @@ policy before restoring them. Do not run the normal full Hermes installer over r
 reconciles selected settings, identities and credentials instead of preserving
 the snapshot verbatim. These steps do not authorize provisioning or access.
 
-Transfer the trusted archive over an authorized encrypted connection. The
-following Bash commands are for a root shell on the **new target**, not the
-source. Set `BUNDLE` to its absolute location. Stop if any command fails:
+## Restore files without starting Hermes
+
+Transfer the trusted archive over an authorized encrypted connection. Use a root
+Bash shell on the **new target**, not the source. Confirm Docker has no existing
+Hermes container; the file-only helper does not inspect or manage Docker.
+Select the transferred file using the `HERMES_BACKUP_FILE` prompt above.
+With a trusted checkout available, the current step is:
 
 ```bash
-set -euo pipefail
-umask 077
-BUNDLE=/secure/path/hermes-recovery.tar.gz
-RECOVERY=$(mktemp -d /root/hermes-recovery.XXXXXX)
-cd "$RECOVERY"
-# Extract only the verifier first from the trusted, previously checked backup.
-tar -xOzf "$BUNDLE" verify.py > verify.py
-python3 verify.py verify "$BUNDLE"
-tar -xzf "$BUNDLE"
-test ! -e /opt/hermes
-docker info >/dev/null
-if docker container inspect hermes >/dev/null 2>&1; then
-  printf 'Refusing to overwrite an existing Hermes container\n' >&2
-  exit 1
-fi
-mkdir -m 0750 /opt/hermes
-tar --extract --file state.tar --directory /opt/hermes \
-  --numeric-owner --same-owner --same-permissions --acls --xattrs --xattrs-include='*'
+python3 scripts/hermes_backup_bundle.py restore-state "$HERMES_BACKUP_FILE" /opt/hermes
 ```
+
+The helper accepts both personal and full bundles and refuses any existing
+destination, including an empty directory or symlink. It verifies a private
+copy, writes the original bundle payloads to `/opt/hermes/.recovery`, extracts
+`app/` and `data/` with GNU tar, then compares file contents and basic stat
+metadata (type, size, mode, owner/group, modification time) with the archive.
+Any extraction/comparison diagnostic, even with exit zero, fails closed without
+printing secret-bearing filenames. GNU tar's comparison does **not** read back
+ACL/xattr values. Where those attributes matter, verify them using native target
+filesystem/security tools before runtime acceptance; no complete attribute
+readback is claimed. It never loads an image, runs hooks, starts Hermes or enables jobs.
+Paths beneath a symlink in the archive are rejected by verification. Use only
+trusted archives and a private target parent; this is not a hostile-archive
+sandbox. Do not edit files concurrently with verification/restoration.
+
+An interrupted/failed restore retains a **partial** target for inspection;
+choose a fresh destination for retry rather than overwriting it. Success means
+files restored and compared, not a healthy bot. `task restore:hermes:state` is
+an equivalent entry point with explicit `HERMES_BACKUP_FILE` and absolute
+`HERMES_RESTORE_DIR` environment variables. A rehearsal may use a new directory
+other than `/opt/hermes`; the saved production Compose still points to the
+original source root and must not be started against a rehearsal directory.
+
+Reserve space in `TMPDIR` for a compressed private copy plus the uncompressed
+verification payloads, and at the destination for all payloads **plus extracted
+state**. Image import later also consumes Docker storage. Keep temporary and
+restored secret-bearing files on private encrypted storage; no encryption is
+performed by this helper.
+
+### Recover without this checkout or the old server
+
+New bundles embed the same `restore-state` helper as `verify.py`. On a clean
+compatible host with the trusted archive selected, extract just that helper
+into a private temporary directory:
+
+```bash
+umask 077 && RECOVERY_HELPER=$(mktemp -d) && tar -xOzf "$HERMES_BACKUP_FILE" verify.py > "$RECOVERY_HELPER/verify.py"
+```
+
+Then use it without contacting the old server, GitHub or a package registry:
+
+```bash
+python3 "$RECOVERY_HELPER/verify.py" restore-state "$HERMES_BACKUP_FILE" /opt/hermes
+```
+
+Trust in the archive is essential: executing an embedded verifier does not
+authenticate its author. Older bundles may embed a verifier without this command;
+use the trusted current repository helper for those. The bundle schema has not
+changed; current tooling continues to verify/restore previous supported bundles.
 
 Preserve the archived ownership rather than recursively changing all files to
 one UID: the app directory and runtime data have different ownership boundaries.
@@ -199,22 +248,57 @@ Review image architecture and the protected recovery Compose definition before
 loading or starting anything. Do not print credential-bearing metadata into
 shared terminals or logs.
 
-Load and tag the exact archived image for the recovery Compose definition:
+For a **full** bundle, after accepting the restored files, load the archived
+image. This imports an image into Docker but does not run a container:
 
 ```bash
-docker image load --input image.tar
-IMAGE_ID=$(python3 -c 'import json; print(json.load(open("image-inspect.json"))["Id"])')
-RECOVERY_IMAGE=$(python3 -c 'import json; print(json.load(open("compose.restore.json"))["services"]["hermes"]["image"])')
-test "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" = "$IMAGE_ID"
-docker image tag "$IMAGE_ID" "$RECOVERY_IMAGE"
-install -m 0600 compose.restore.json /opt/hermes/app/compose.restore.json
-docker compose --file /opt/hermes/app/compose.restore.json config --quiet
+cd /opt/hermes/.recovery && docker image load --input image.tar
+```
+
+Then obtain its exact ID and recovery tag from the protected metadata and
+confirm the loaded identity before tagging (Bash, still in `.recovery`):
+
+```bash
+IMAGE_ID=$(python3 -c 'import json; print(json.load(open("image-inspect.json"))["Id"])') && RECOVERY_IMAGE=$(python3 -c 'import json; print(json.load(open("compose.restore.json"))["services"]["hermes"]["image"])') && test "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" = "$IMAGE_ID" && docker image tag "$IMAGE_ID" "$RECOVERY_IMAGE"
+```
+
+Only after reviewing the saved definition, install it privately and validate
+its syntax; do not start it yet:
+
+```bash
+install -m 0600 compose.restore.json /opt/hermes/app/compose.restore.json && docker compose --file /opt/hermes/app/compose.restore.json config --quiet
 ```
 
 Configuration validation does not start a container and is not runtime proof.
 Keep using this standalone restore file until the deployment configuration has
 been deliberately reconciled; switching back to the old template may change
 environment interpolation, the selected profile or the image.
+
+## Isolated acceptance before cutover
+
+Keep the production Compose definition stopped: it retains the source's host
+network, gateway command, credentials and restart policy. `compose config` is
+syntax validation, **not isolation**. Never use `compose up` as a rehearsal.
+
+First inspect files offline: Chebi's nonempty `SOUL.md`, memory and session
+availability, application data/manifests, credential file modes, and database
+integrity with each application's native offline checker. Work on a disposable
+copy for tools that might modify databases. Do not print private rows or tokens.
+Inventory cron/scheduled work in all restored profiles and applications as well
+as any separately managed host timers. Reconcile it with the owner's current
+approved list; older archives may predate cancellation. **Cancelled reports and
+mail monitoring stay disabled.** Do not assume a template/archive authorizes them.
+
+If a runtime rehearsal is needed, use a disposable state copy, no production
+credentials, jobs disabled, a separate container name, `restart: "no"`, no
+published ports, and Docker `network_mode: "none"` (not host networking).
+Override the image entrypoint/command with the specific offline check, so its
+normal gateway/scheduler startup never runs. These overrides are a separate
+reviewed rehearsal configuration, not the saved production Compose. Do not
+mount the live Docker socket or host paths beyond the disposable data copy.
+Offline checks cannot establish inference or Telegram behavior. If suitable
+application-specific checks or the job inventory are unknown, record that
+blocker rather than starting the gateway to discover them.
 
 ## Switch ownership and verify behavior
 
@@ -225,7 +309,9 @@ isolated from those external services; merely using a second host is not
 isolation.
 
 For a planned move, stop the old Hermes instance immediately before the
-separately authorized cutover and ensure nothing restarts it. For disaster
+separately authorized cutover and ensure nothing restarts it: disable its
+container restart policy and any systemd/cron/automation that recreates it.
+Record those settings for a deliberate rollback; retain the old files/server. For disaster
 recovery, establish that the old instance cannot still run. For minimal data
 loss during a planned move, arrange a quiet maintenance window around the final
 backup and cutover: the backup resumes the source, so writes after its snapshot
@@ -235,8 +321,7 @@ Only after ownership and side effects are authorized, start the restored
 service:
 
 ```bash
-docker compose --file /opt/hermes/app/compose.restore.json up --detach --pull never
-docker inspect --format '{{.State.Status}} {{.State.Health.Status}}' hermes
+docker compose --file /opt/hermes/app/compose.restore.json up --detach --pull never && docker inspect --format '{{.State.Status}} {{.State.Health.Status}}' hermes
 ```
 
 Then independently check the selected gateway profile, loopback health, memory

@@ -1,4 +1,9 @@
-# Quickstart
+# Supporting installer quickstart
+
+For routine care of the existing agent, start with [README.md](README.md) and
+[operations](docs/operations.md). This page is for explicitly requested host
+bootstrap/deployment, not the default workflow. The old stage roadmap is
+historical. Do not install over restored state; use [recovery](docs/backup-restore.md).
 
 ## 1. Validate the checkout
 
