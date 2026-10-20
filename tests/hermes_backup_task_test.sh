@@ -212,15 +212,36 @@ assert_connection hermes-minimal '' personal
   || fail "alias failure left temporary backup files"
 printf 'PASS SSH alias failure does not fall back to Terraform or publish a backup\n'
 
-for task_name in backup:hermes b:hermes hermes:backup; do
+for task_name in backup:hermes b:hermes hermes:backup backup:hermes:full; do
   : >"$command_log"
-  run_connection_backup task --taskfile "$repo_root/Taskfile.yml" "$task_name" \
-    >"$fixture_root/task-run.out" 2>&1
-  assert_connection hermes-minimal '' personal
+  run_connection_backup FAKE_SSH_MODE=full task --taskfile "$repo_root/Taskfile.yml" "$task_name" \
+    >"$fixture_root/task-run.out" 2>&1 \
+    || { printf '%s\n' "$(<"$fixture_root/task-run.out")" >&2; fail "Go Task $task_name must request a full recovery bundle"; }
+  assert_connection hermes-minimal '' full
   grep -q 'Backup verified:' "$fixture_root/task-run.out" \
     || fail "Go Task $task_name must verify the backup without deployment variables"
 done
-printf 'PASS canonical, short, and legacy Task names run without deployment variables\n'
+printf 'PASS canonical, short, legacy and explicit-full Task names create full recovery bundles\n'
+
+for task_name in backup:hermes:personal b:hermes:personal; do
+  : >"$command_log"
+  run_connection_backup task --taskfile "$repo_root/Taskfile.yml" "$task_name" \
+    >"$fixture_root/task-personal.out" 2>&1
+  assert_connection hermes-minimal '' personal
+  grep -q 'Backup verified:' "$fixture_root/task-personal.out" \
+    || fail "Go Task $task_name must retain an explicit verified personal-state path"
+done
+printf 'PASS explicit personal Task preserves the lightweight backup path\n'
+
+: >"$command_log"
+before="$(archive_count)"
+if run_connection_backup task --taskfile "$repo_root/Taskfile.yml" backup:hermes \
+  >"$fixture_root/task-scope-mismatch.out" 2>&1; then
+  fail 'default Task must reject a personal-only archive when full recovery was requested'
+fi
+assert_connection hermes-minimal '' full
+[[ "$(archive_count)" == "$before" ]] || fail 'Task scope mismatch published an archive'
+printf 'PASS default Task rejects a personal-only response without publishing it\n'
 
 : >"$command_log"
 run_connection_backup FAKE_SSH_MODE=full "$repo_root/scripts/hermes_backup.sh" --full \

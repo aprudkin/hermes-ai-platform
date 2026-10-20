@@ -3,7 +3,19 @@ version: '3'
 tasks:
   backup:hermes:
     aliases: [b:hermes, hermes:backup]
-    desc: Back up Hermes settings and personal state without images or caches
+    desc: Create and verify a full Hermes recovery bundle on this computer
+    summary: |
+      Full state, dependencies and the current image; briefly pauses the source container.
+      Defaults to SSH alias hermes-minimal and local directory ~/backup/hermer.
+      HERMES_DEPLOY_HOST and HERMES_BACKUP_DIR override the source and destination.
+      No cloud upload, retention deletion, restore or deployment.
+      The global launcher exposes this same task as task -g backup:hermes / task -g b:hermes.
+    cmds:
+      - ./scripts/hermes_backup.sh --full
+
+  backup:hermes:personal:
+    aliases: [b:hermes:personal]
+    desc: Back up personal state only; excludes the image and recognized dependencies/caches
     cmds:
       - ./scripts/hermes_backup.sh
 

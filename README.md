@@ -34,15 +34,23 @@ protected storage and space requirements **before** running a capture.
 
 | Command | Result / boundary |
 | --- | --- |
-| `task backup:hermes` | Capture personal state over SSH; briefly pauses the live container; verify the received archive |
-| `task backup:hermes:full` | Capture state, retained dependencies and exact image for recovery/migration |
+| `task backup:hermes` | Capture full state, retained dependencies and exact image to this computer; briefly pauses the live container; verifies the received archive |
+| `task backup:hermes:full` | Explicit equivalent of the full default |
+| `task backup:hermes:personal` | Lighter personal-state backup without the image or recognized dependencies/caches |
 | `task verify:hermes` | Locally verify the trusted archive named by `HERMES_BACKUP_FILE`; no server access |
 | `task restore:hermes:state` | Restore and compare files into a **new** `HERMES_RESTORE_DIR` on compatible Linux; requires `HERMES_BACKUP_FILE`; never starts Hermes |
 | `task update:hermes` | Back up, review and validate a candidate image pin **only**; no commit/push/deployment |
 | `./installer/install.sh validate` | Strict repository checks including behavioral tests; not a live recovery test |
 
 `task --list` shows the commands. Existing aliases `b:hermes`, `hermes:backup`
-and `hermes:update` remain. **Update behavior intentionally changed:** automatic
+and `hermes:update` remain. **The default backup Task now creates a full bundle**;
+use `backup:hermes:personal` for the previous lightweight Task behavior. The direct
+`./scripts/hermes_backup.sh` CLI still defaults to personal state for compatibility.
+
+With the owner's existing global Go Task catalog, the usual command from any
+directory is `task -g b:hermes` (or `t b:hermes` with the existing shell alias).
+The global launcher delegates to this project Taskfile, like the other backups;
+no extra global implementation, cloud destination or schedule is needed. **Update behavior intentionally changed:** automatic
 commit/push/deploy was removed; legacy `CONFIRM_PUSH` / `CONFIRM_DEPLOY` flags
 are rejected. A matching local image pin is not proof of a successful deployment
 and returns a non-success result with explicit retry guidance.

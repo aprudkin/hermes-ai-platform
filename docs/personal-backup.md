@@ -1,6 +1,6 @@
 # Hermes settings and personal-state backup
 
-`task backup:hermes` saves settings and personal state, not a self-contained
+`task backup:hermes:personal` saves settings and personal state, not a self-contained
 copy of the runtime. It keeps configuration and authentication, memory and
 history, custom skills and jobs, and custom application source and data. It
 omits the Docker image and recognized caches and dependency installations.
@@ -12,12 +12,20 @@ Verification does not establish that a live restore or integrations work.
 After authorizing a live backup, run from this repository on the controller:
 
 ```bash
-task backup:hermes
+task backup:hermes:personal
 ```
 
-`task b:hermes` and `task hermes:backup` are aliases for the same personal-state
-backup. With the controller's global go-tasks catalog installed, use
-`t backup:hermes` or `t b:hermes` from another directory.
+`task b:hermes:personal` is the project-local short alias. The direct
+`./scripts/hermes_backup.sh` CLI without flags also retains personal mode.
+
+The ordinary `task backup:hermes`, `task b:hermes` and `task hermes:backup`
+now create a **full** recovery bundle instead. The existing global launchers
+`t backup:hermes` / `t b:hermes` follow that full default. To run personal mode
+from another directory without adding a global launcher:
+
+```bash
+task --dir "$HOME/dev/hermes-ai-platform" backup:hermes:personal
+```
 
 With no deployment variables set, the wrapper connects to `hermes-minimal` and
 lets SSH read its user and identity from the controller's `~/.ssh/config`.
@@ -220,5 +228,5 @@ For explicit self-contained runtime migration, use
 `./scripts/hermes_backup.sh --full` instead. It retains dependencies and exports
 the exact Docker image. See the repository's
 [full recovery guide](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/backup-restore.md).
-The existing image-upgrade workflow continues to request this full mode before
-an upgrade; the ordinary backup task does not.
+Both the ordinary `task backup:hermes` and the image-upgrade preparation
+workflow request full mode. Personal mode remains an explicit lightweight option.

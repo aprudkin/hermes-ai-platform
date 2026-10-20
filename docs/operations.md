@@ -86,48 +86,33 @@ setting does not select an STT provider and is separate from the UI language.
 ## Hermes backups
 
 Run `task backup:hermes` (short alias `task b:hermes`; legacy alias
-`task hermes:backup`) to create a verified **personal-state backup**. It keeps
-configuration/authentication, memory/history, custom skills and jobs, and custom
-application source/data from `/opt/hermes/data` and `/opt/hermes/app`. Recognized
-caches and dependency environments are excluded; no Docker image is exported.
-Small runtime metadata, a Compose definition and a manual recovery guide are
-included. Restore requires a separately installed image and dependencies.
+`task hermes:backup`) to create and verify a **full recovery bundle** on the
+controller computer. It retains state, dependencies and the exact current
+Docker image. The existing global catalog exposes the same task from any
+directory as `task -g backup:hermes` / `task -g b:hermes` (or `t b:hermes`).
+The global launcher remains a thin project-task delegation, like other backups.
 
-Standalone backup defaults to the controller's `hermes-minimal` SSH alias.
-`HERMES_DEPLOY_HOST` overrides it; user/key overrides without a host retain the
-legacy Terraform lookup. Prefer an explicit host for an existing installation.
-See [connection and storage inputs](personal-backup.md). The controller requires Python 3; the
-server requires Python 3, Docker access and GNU tar. Bundles default to
-`~/backup/hermer/hermes-personal-<timestamp>-<pid>.tar.gz`; set
-`HERMES_BACKUP_DIR` to choose another local destination.
+The default destination is `~/backup/hermer/hermes-recovery-<timestamp>-<pid>.tar.gz`.
+`HERMES_BACKUP_DIR` selects another local destination. Capture uses the configured
+`hermes-minimal` SSH alias unless overridden; see the [full recovery guide](backup-restore.md)
+for connection inputs, permissions, space and consistency requirements. Run from
+the owner's computer or another independent controller, not the source container.
 
-One filtered state snapshot is staged privately on the server. The free-space
-check covers retained state and metadata overhead, not an image or excluded
-caches. Compression streams to the controller, which verifies the transfer
-using temporary uncompressed payloads before publishing the final archive.
-The container is paused only while the state snapshot is written locally,
-then unpaused before compression and network transfer. Cleanup attempts to release its owned pause on failure. A failed
-unpause is an error; check the actual container state before continuing. Do not
-deploy or edit server state concurrently with a backup.
+This intentionally changes the ordinary Task default from personal to full.
+`task backup:hermes:full` remains equivalent. For the previous lightweight behavior,
+use `task backup:hermes:personal` / `task b:hermes:personal` in this project.
+The direct `./scripts/hermes_backup.sh` CLI without flags still uses personal
+mode; `--full` selects full mode. See [personal backup](personal-backup.md) for
+its exclusions and separately required image/dependency reconstruction.
 
-Before publishing the mode-0600 final archive, the task verifies the bundle
-personal-state format, required contents and payload hashes. This is not proof of a
-successful live restore. The bundle contains credentials and is not encrypted;
-protect its storage and transfer. It does not copy the entire host, controller
-SSH keys, Terraform state or external service settings, and does not configure
-a schedule, retention, automatic restore or cloud storage. Legacy data-only
-archives and full recovery bundles cannot masquerade as personal-state backups.
-
-See [Hermes settings and personal-state backup](personal-backup.md) for exact
-exclusions, resource requirements and manual recovery boundaries. That guide is
-included as `RESTORE.md`. Unknown files and custom binaries are retained; the
-backup is not a promise of a small, fixed archive size.
-
-For explicit self-contained migration, `./scripts/hermes_backup.sh --full`
-retains dependencies and the installed image in the existing
-`hermes-recovery-*.tar.gz` format. See the
-[full recovery guide](backup-restore.md). Existing archives are not rewritten or
-deleted when the ordinary backup default changes.
+Both modes temporarily pause the source for the snapshot, resume it before
+compression/transfer, and verify the received archive before publishing its
+mode-0600 final name. A failed unpause is an error, not success. Do not deploy or
+edit state concurrently. These commands do not restore, deploy, upload to a cloud,
+configure a schedule or delete existing backups. Verification is not proof of a
+working restored installation. Archives contain credentials and remain
+**unencrypted**; protect storage and transport. Whole-host files, controller keys,
+Terraform state and external accounts remain outside the bundle boundary.
 
 ## Hermes image updates
 

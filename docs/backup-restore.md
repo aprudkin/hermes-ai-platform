@@ -1,9 +1,10 @@
 # Portable Hermes backup and manual recovery
 
 This guide is included as `RESTORE.md` in each **full** recovery bundle created
-with `./scripts/hermes_backup.sh --full`. Ordinary `task backup:hermes` now saves
-[settings and personal state](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/personal-backup.md)
-without an image or recognized caches/dependencies. This full guide covers one
+with `task backup:hermes` or `./scripts/hermes_backup.sh --full`. For a smaller
+[personal-state backup](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/personal-backup.md)
+without an image or recognized caches/dependencies, explicitly select
+`task backup:hermes:personal`. This full guide covers one
 Hermes container on Ubuntu 24.04 or newer, using host networking and the single
 `/opt/hermes/data:/opt/data` bind mount. It is not a whole-server backup or an
 automated service recovery/start command. The `restore-state` helper only restores
@@ -15,12 +16,17 @@ that a live restore or the bot's integrations have been tested.
 Run from this repository on the controller, after authorizing a live backup:
 
 ```bash
-task backup:hermes:full
+task backup:hermes
 ```
 
-This task calls `./scripts/hermes_backup.sh --full`; the direct CLI remains supported. The ordinary task
-and its `b:hermes` / `hermes:backup` aliases create personal-state backups instead.
-The image-upgrade workflow explicitly uses full mode for its pre-upgrade backup.
+This task calls `./scripts/hermes_backup.sh --full`. Its `b:hermes` and
+`hermes:backup` aliases, and the explicit `backup:hermes:full` task, all create
+full bundles. With the owner's existing global catalog, use `task -g b:hermes`
+(or `t b:hermes`) from any directory; the launcher delegates to this project.
+
+This intentionally changes the old Task default from personal to full recovery.
+The direct script without flags still creates a personal backup for compatibility.
+The image-upgrade workflow continues to use full mode for its pre-upgrade backup.
 
 With no deployment variables set, the wrapper uses the `hermes-minimal` alias
 and its user and identity from the controller's `~/.ssh/config`. Configure that
