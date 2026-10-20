@@ -107,9 +107,12 @@ Run these commands from the repository root; their definitions are in
   Preserve its backup and confirmation gates; check its generated commit
   against applicable commit rules before using the automated delivery path.
 
-## Issue tracking
+## Agent skills
 
-- For tracked work in this repository, read `docs/agents/issue-tracker.json`
-  for the target and approved project/area labels; apply the global issue
+- **Issue tracker:** before reading, creating or updating issues, read
+  `docs/agents/issue-tracker.md`; `docs/agents/issue-tracker.json` remains the
+  source for the target and approved project/area labels. Apply the global issue
   lifecycle, journal, and commit-reference rules. Legacy remote labels do not
   replace the configured vocabulary.
+- **Domain docs:** before researching project concepts or recording architecture
+  decisions, read `docs/agents/domain.md`.

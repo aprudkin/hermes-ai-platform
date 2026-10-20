@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "decisions": {
+    "triage.setup": {
+      "choice": "deferred",
+      "basis": "90d0a6ced8b6f29a012ea3739987286bacb38d3ae01405b75bf28e5dbf0518d7"
+    }
+  },
+  "preferences": {
+    "domainLayout": "single-context"
+  }
+}
