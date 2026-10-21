@@ -20,6 +20,9 @@ There is no requirement to add databases, Redis, monitoring or more agents.
   the runtime image and recognized dependency/cache trees.
 - [Full recovery](docs/backup-restore.md): exact image plus state/dependencies,
   offline restoration, isolated checks, cutover and rollback boundaries.
+- [Autonomous server backup](docs/server-backup.md): separate direct-to-cloud
+  workflow, 08:00 Moscow schedule and scoped retention; installation/activation
+  require separate authorization, and local Tasks remain unchanged.
 
 The normal persistent mount is `/opt/hermes/data` on the host → `/opt/data` in
 the container. `/opt/hermes/app` contains deployed Compose/gateway configuration.

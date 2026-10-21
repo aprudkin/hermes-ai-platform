@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Hermes backup at 08:00 Moscow, with one missed-window catch-up
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Europe/Moscow
+Persistent=true
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=hermes-backup.service
+
+[Install]
+WantedBy=timers.target

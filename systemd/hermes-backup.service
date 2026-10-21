@@ -1,0 +1,17 @@
+[Unit]
+Description=Verified Hermes full backup directly to Mail.ru crypt
+Wants=network-online.target
+After=network-online.target time-sync.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -I /usr/local/lib/hermes-backup/hermes_server_backup_entry.py --confirm-external-mutation
+TimeoutStartSec=4h
+TimeoutStopSec=240s
+KillMode=mixed
+Restart=no
+StandardOutput=null
+StandardError=journal
