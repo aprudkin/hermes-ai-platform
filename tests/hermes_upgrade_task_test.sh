@@ -1,299 +1,155 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 # shellcheck source=tests/test_helper.sh
 source "$(dirname "${BASH_SOURCE[0]}")/test_helper.sh"
-
 fixture_root="$(mktemp -d)"
 trap 'rm -rf "$fixture_root"' EXIT
 fake_bin="$fixture_root/bin"
 fixture_repo="$fixture_root/repo"
 command_log="$fixture_root/commands.log"
-backup_dir="$fixture_root/backups"
-private_key="$fixture_root/luk"
-public_key="$fixture_root/luk.pub"
-provider_env="$fixture_root/hermes.env"
-review_file="$fixture_root/compatibility-review.json"
-
-mkdir -p "$fake_bin" "$fixture_repo/scripts" "$fixture_repo/docker" \
-  "$fixture_repo/docs" "$fixture_repo/installer"
-cp "$repo_root/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_upgrade.sh"
-cp "$repo_root/scripts/hermes_backup.sh" "$fixture_repo/scripts/hermes_backup.sh"
-cp "$repo_root/scripts/hermes_backup_bundle.py" "$fixture_repo/scripts/hermes_backup_bundle.py"
-cp "$repo_root/docs/backup-restore.md" "$fixture_repo/docs/backup-restore.md"
-python3 "$repo_root/tests/hermes_backup_bundle_test.py" \
-  --fixture-bundle "$fixture_root/recovery-fixture.tar.gz"
-cp "$repo_root/docker/docker-compose.yml" "$fixture_repo/docker/docker-compose.yml"
-cp "$repo_root/README.md" "$fixture_repo/README.md"
-cp "$repo_root/docs/operations.md" "$fixture_repo/docs/operations.md"
-# Keep the disposable baseline independent of the production image pin.
-python3 - "$fixture_repo/docker/docker-compose.yml" <<'PYTHON'
-from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-content, count = re.subn(
-    r"(?m)^(\s*image:\s*nousresearch/hermes-agent:)[^\s#]+\s*$",
-    r"\g<1>v2026.8.27",
-    path.read_text(),
-)
-if count != 1:
-    raise SystemExit("expected exactly one Hermes image pin in test fixture")
-path.write_text(content)
-PYTHON
-printf 'private fixture key\n' >"$private_key"
-printf 'public fixture key\n' >"$public_key"
-printf 'OPENROUTER_API_KEY=test-only-value\n' >"$provider_env"
-
+review_file="$fixture_root/review.json"
+mkdir -p "$fake_bin" "$fixture_repo/"{scripts,docker,docs,installer}
+cp "$repo_root/scripts/"hermes_{upgrade.sh,backup.sh,backup_bundle.py,backup_progress.py} "$fixture_repo/scripts/"
+cp "$repo_root/docs/"{backup-restore.md,operations.md} "$fixture_repo/docs/"
+cp "$repo_root/README.md" "$fixture_repo/"
+printf 'image: nousresearch/hermes-agent:v1\n' >"$fixture_repo/docker/docker-compose.yml"
+printf 'fixture key\n' >"$fixture_root/key"
+python3 "$repo_root/tests/hermes_backup_bundle_test.py" --fixture-bundle "$fixture_root/bundle.tar.gz"
 cat >"$fake_bin/ssh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 cat >/dev/null
-[[ "${FAKE_BACKUP_FAILURE:-no}" != yes ]] || exit 23
-cat "$FAKE_RECOVERY_BUNDLE"
+[[ "${FAIL_BACKUP:-no}" != yes ]] || exit 23
+cat "$FAKE_BUNDLE"
 FAKE
-
 cat >"$fake_bin/gh" <<'FAKE'
 #!/usr/bin/env bash
-set -euo pipefail
 printf 'gh %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-printf '%s\n' "$FAKE_HERMES_TAG"
+printf '%s\n' "$FAKE_TAG"
 FAKE
-
-cat >"$fake_bin/terraform" <<'FAKE'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'terraform %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-[[ "$*" == *"output -raw server_ipv4"* ]] \
-  || { printf 'unexpected terraform command: %s\n' "$*" >&2; exit 1; }
-printf '%s\n' 203.0.113.44
-FAKE
-
-
 cat >"$fake_bin/git" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "-C" ]]; then
-  shift 2
-fi
-case "${1:-}" in
-  status)
-    exit 0
-    ;;
-  symbolic-ref)
-    printf 'main\n'
-    ;;
-  add|commit|push)
-    printf 'git %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-    ;;
-  *)
-    printf 'unexpected git command: %s\n' "$*" >&2
-    exit 1
-    ;;
-esac
+shift 2
+[[ "$1" == status ]] || { printf 'git mutation forbidden\n' >&2; exit 91; }
+printf '%s' "${DIRTY:-}"
 FAKE
-
+cat >"$fake_bin/terraform" <<'FAKE'
+#!/usr/bin/env bash
+printf 'terraform %s\n' "$*" >>"$FAKE_COMMAND_LOG"
+printf '203.0.113.44\n'
+FAKE
 cat >"$fixture_repo/installer/install.sh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'installer %s\n' "$*" >>"$FAKE_COMMAND_LOG"
+[[ "$*" == validate ]] || exit 92
+[[ "${FAIL_VALIDATE:-no}" != yes ]] || exit 42
 FAKE
-
-chmod +x "$fake_bin/ssh" "$fake_bin/gh" "$fake_bin/git" "$fake_bin/terraform" \
-  "$fixture_repo/scripts/hermes_upgrade.sh" "$fixture_repo/scripts/hermes_backup.sh" \
-  "$fixture_repo/installer/install.sh"
-
+chmod +x "$fake_bin/"* "$fixture_repo/installer/install.sh"
 run_upgrade() {
-  PATH="$fake_bin:$PATH" \
-    FAKE_COMMAND_LOG="$command_log" \
-    FAKE_RECOVERY_BUNDLE="$fixture_root/recovery-fixture.tar.gz" \
-    FAKE_BACKUP_FAILURE="${FAKE_BACKUP_FAILURE:-no}" \
-    HERMES_BACKUP_DIR="$backup_dir" \
+  PATH="$fake_bin:$PATH" FAKE_COMMAND_LOG="$command_log" \
+    FAKE_BUNDLE="$fixture_root/bundle.tar.gz" FAKE_TAG="${FAKE_TAG:-v2}" \
+    HERMES_BACKUP_DIR="$fixture_root/backups" \
     HERMES_DEPLOY_HOST="${HERMES_DEPLOY_HOST-203.0.113.44}" \
     HERMES_DEPLOY_SSH_USER="${HERMES_DEPLOY_SSH_USER-root}" \
-    HERMES_DEPLOY_SSH_PRIVATE_KEY="${HERMES_DEPLOY_SSH_PRIVATE_KEY-$private_key}" \
-    HERMES_DEPLOY_SSH_PUBLIC_KEY="$public_key" \
-    HERMES_DEPLOY_SSH_SOURCE_CIDR=198.51.100.10/32 \
-    HERMES_MODEL_PROVIDER=openrouter \
-    HERMES_MODEL=test/model \
-    HERMES_ENV="$provider_env" \
-    HERMES_UPGRADE_REVIEW_FILE="${HERMES_UPGRADE_REVIEW_FILE:-}" \
-    "$fixture_repo/scripts/hermes_upgrade.sh"
+    HERMES_DEPLOY_SSH_PRIVATE_KEY="${HERMES_DEPLOY_SSH_PRIVATE_KEY-$fixture_root/key}" \
+    HERMES_UPGRADE_REVIEW_FILE="${HERMES_UPGRADE_REVIEW_FILE-$review_file}" \
+    bash "$fixture_repo/scripts/hermes_upgrade.sh"
 }
-
+make_review() {
+  python3 - "$review_file" "$fixture_repo" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[2])
+Path(sys.argv[1]).write_text(json.dumps({
+    "tag": "v2", "release_notes_url": "https://github.com/NousResearch/hermes-agent/releases/tag/v2",
+    "compatibility": "compatible", "summary": "Fixture review",
+    "contracts": {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                  for name in ("README.md", "docs/operations.md", "docker/docker-compose.yml")},
+    "checks": [{"command": "./installer/install.sh validate", "result": "passed"}]
+}))
+PY
+}
 for variable in HERMES_DEPLOY_SSH_USER HERMES_DEPLOY_SSH_PRIVATE_KEY; do
   : >"$command_log"
-  if (export "$variable="; FAKE_HERMES_TAG=v2026.9.01 run_upgrade) \
-    >"$fixture_root/missing-ssh-input.out" 2>&1; then
-    fail "upgrade must reject missing $variable even when plain backups use SSH config"
+  if (export "$variable="; run_upgrade) >"$fixture_root/error" 2>&1; then
+    fail "missing SSH input must fail"
   fi
-  [[ ! -s "$command_log" ]] \
-    || fail "missing $variable must stop before backup, release lookup, push or deployment"
-  grep -q "$variable must be set" "$fixture_root/missing-ssh-input.out" \
-    || fail "upgrade must explain the missing SSH input"
+  [[ ! -s "$command_log" ]] || fail "missing SSH input reached backup"
 done
-printf 'PASS upgrade still requires explicit SSH user and key before backup\n'
+for variable in CONFIRM_PUSH CONFIRM_DEPLOY; do
+  : >"$command_log"
+  if (export "$variable=yes"; run_upgrade) >"$fixture_root/error" 2>&1; then
+    fail "legacy automation flags must explicitly fail, not silently change behavior"
+  fi
+  [[ ! -s "$command_log" ]] || fail "legacy flags reached remote access"
+done
+: >"$command_log"
+if DIRTY=' M unrelated' run_upgrade >"$fixture_root/error" 2>&1; then fail 'dirty checkout accepted'; fi
+[[ ! -s "$command_log" ]] || fail 'dirty checkout reached backup'
+: >"$command_log"
+if FAIL_BACKUP=yes run_upgrade >"$fixture_root/error" 2>&1; then fail 'failed backup accepted'; fi
+! grep -Eq '^(gh|installer) ' "$command_log" || fail 'backup failure reached later actions'
+printf 'PASS input, legacy authorization, clean-tree and backup gates\n'
 
 : >"$command_log"
-if FAKE_BACKUP_FAILURE=yes FAKE_HERMES_TAG=v2026.9.01 \
-  run_upgrade >"$fixture_root/backup-failure.out" 2>&1; then
-  fail "a failed recovery bundle must stop the upgrade"
+if FAKE_TAG=v1 run_upgrade >"$fixture_root/same-pin" 2>&1; then
+  fail 'REGRESSION: matching local pin is not evidence of a successful deployment/retry'
 fi
-! grep -Eq '^(gh|git|installer) ' "$command_log" \
-  || fail "backup failure must prevent release lookup, push and deployment"
-printf 'PASS failed recovery bundle blocks the upgrade\n'
-
-: >"$command_log"
-FAKE_HERMES_TAG=v2026.8.27 run_upgrade >"$fixture_root/no-update.out"
-
-archives=("$backup_dir"/*.tar.gz)
-[[ "${#archives[@]}" -eq 1 ]] \
-  || fail "the no-update path must create exactly one backup archive"
+grep -q 'live deployment is UNKNOWN' "$fixture_root/same-pin" \
+  || { printf '%s\n' "$(<"$fixture_root/same-pin")" >&2; fail 'missing deployment uncertainty'; }
+! grep -q '^installer ' "$command_log" || fail 'same pin invoked installer'
+archives=("$fixture_root/backups/"*.tar.gz)
+[[ "${#archives[@]}" -eq 1 ]] || fail 'same pin must still retain one recovery capture'
 python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}" full
-grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes$' "$command_log" \
-  || fail "upgrade backup must explicitly retain full recovery, not the personal default"
-python3 - "${archives[0]}" <<'PYTHON'
-import sys
-import tarfile
-with tarfile.open(sys.argv[1], 'r:gz') as bundle:
-    with tarfile.open(fileobj=bundle.extractfile('state.tar'), mode='r|') as state:
-        names = {member.name.rstrip('/') for member in state}
-assert {'data/config.yaml', 'app/docker-compose.yml', 'app/gateway.env'} <= names
-PYTHON
-[[ "$(sed -n '1p' "$command_log")" == ssh\ * ]] \
-  || fail "the backup must run before the upstream release lookup"
-! grep -q '^git ' "$command_log" \
-  || fail "the no-update path must not commit or push"
-! grep -q '^installer ' "$command_log" \
-  || fail "the no-update path must not deploy"
-grep -q 'skipping push and deployment' "$fixture_root/no-update.out" \
-  || fail "the no-update path must report the skipped external mutations"
-printf 'PASS no-update path backs up before skipping push and deployment\n'
+grep -q 'root@203.0.113.44 python3 - capture /opt/hermes hermes$' "$command_log" || fail 'backup is not full'
+[[ "$(head -1 "$command_log")" == ssh\ * ]] || fail 'release lookup preceded backup'
+printf 'PASS same-pin retry cannot report a successful no-op\n'
 
-: >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes \
-  run_upgrade >"$fixture_root/unreviewed.out" 2>&1; then
-  fail "the update path must reject a release without compatibility evidence"
-fi
-! grep -q '^git ' "$command_log" \
-  || fail "an unreviewed release must not be staged, committed, or pushed"
-! grep -q '^installer ' "$command_log" \
-  || fail "an unreviewed release must not be deployed"
-grep -q 'HERMES_UPGRADE_REVIEW_FILE' "$fixture_root/unreviewed.out" \
-  || fail "the refusal must explain the missing review evidence"
-printf 'PASS changed release refuses to proceed without compatibility evidence\n'
-
-python3 - "$review_file" "$fixture_repo" <<'PYTHON'
-import hashlib
-import json
+if HERMES_UPGRADE_REVIEW_FILE='' run_upgrade >"$fixture_root/error" 2>&1; then fail 'missing review accepted'; fi
+make_review
+for mutation in tag contracts compatibility; do
+  cp "$review_file" "$fixture_root/review-original"
+  python3 - "$review_file" "$mutation" <<'PY'
+import json, sys
 from pathlib import Path
-import sys
-
-review_path = Path(sys.argv[1])
-root = Path(sys.argv[2])
-contracts = ["README.md", "docs/operations.md", "docker/docker-compose.yml"]
-review = {
-    "tag": "v2026.9.01",
-    "release_notes_url": "https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.01",
-    "compatibility": "compatible",
-    "summary": "Reviewed release notes and current image-dependent project contracts.",
-    "contracts": {
-        name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-        for name in contracts
-    },
-    "checks": [
-        {"command": "./installer/install.sh validate", "result": "passed"}
-    ],
-}
-review_path.write_text(json.dumps(review))
-PYTHON
-
-python3 - "$review_file" <<'PYTHON'
-import json
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-review = json.loads(path.read_text())
-review["tag"] = "v2026.8.27"
-path.write_text(json.dumps(review))
-PYTHON
-: >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 \
-  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
-  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-tag.out" 2>&1; then
-  fail "the update path must reject evidence for a different release tag"
-fi
-! grep -q '^git ' "$command_log" \
-  || fail "evidence for a different release tag must not reach Git mutations"
-! grep -q '^installer ' "$command_log" \
-  || fail "evidence for a different release tag must not reach deployment"
-printf 'PASS review evidence must match the exact release tag\n'
-
-python3 - "$review_file" "$fixture_repo" <<'PYTHON'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-root = Path(sys.argv[2])
-review = json.loads(path.read_text())
-review["tag"] = "v2026.9.01"
-review["contracts"]["README.md"] = hashlib.sha256(
-    (root / "README.md").read_bytes()
-).hexdigest()
-path.write_text(json.dumps(review))
-(root / "README.md").write_text((root / "README.md").read_text() + " ")
-PYTHON
-: >"$command_log"
-if FAKE_HERMES_TAG=v2026.9.01 \
-  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
-  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/stale-contract.out" 2>&1; then
-  fail "the update path must reject evidence for changed project contracts"
-fi
-! grep -q '^git ' "$command_log" \
-  || fail "stale contract evidence must not reach Git mutations"
-! grep -q '^installer ' "$command_log" \
-  || fail "stale contract evidence must not reach deployment"
-printf 'PASS review evidence must match the inspected project contracts\n'
-cp "$repo_root/README.md" "$fixture_repo/README.md"
-
-: >"$command_log"
-FAKE_HERMES_TAG=v2026.9.01 \
-  HERMES_UPGRADE_REVIEW_FILE="$review_file" \
-  CONFIRM_PUSH=yes CONFIRM_DEPLOY=yes run_upgrade >"$fixture_root/update.out"
-grep -q 'nousresearch/hermes-agent:v2026.9.01' \
-  "$fixture_repo/docker/docker-compose.yml" \
-  || fail "the update path must pin the discovered Hermes release"
-grep -q '^git add docker/docker-compose.yml$' "$command_log" \
-  || fail "the update path must stage only the image pin"
-grep -q '^git commit -m chore: update Hermes Agent to v2026.9.01$' "$command_log" \
-  || fail "the update path must create a release-specific commit"
-grep -q '^git push origin main$' "$command_log" \
-  || fail "the update path must push the current branch"
-grep -q '^installer deploy existing ' "$command_log" \
-  || fail "the update path must invoke the existing-host installer"
-grep -q -- '--confirm-external-mutation' "$command_log" \
-  || fail "the update path must preserve the installer's deployment confirmation"
-printf 'PASS update path pins, pushes, and deploys after a verified backup\n'
-
-: >"$command_log"
-FAKE_HERMES_TAG=v2026.9.01 HERMES_DEPLOY_HOST='' run_upgrade \
-  >"$fixture_root/terraform-host.out"
-grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" \
-  || fail "the upgrade must resolve an omitted deployment host from Terraform state"
-grep -q 'root@203.0.113.44' "$command_log" \
-  || fail "the backup must use the Terraform-resolved deployment host"
-printf 'PASS omitted deployment host resolves from Terraform state\n'
-
-
-for task_name in update:hermes hermes:update; do
-  task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" \
-    >"$fixture_root/task-dry-run.out" 2>&1
-  grep -q './scripts/hermes_upgrade.sh' "$fixture_root/task-dry-run.out" \
-    || fail "Go Task $task_name must invoke the upgrade workflow"
+p = Path(sys.argv[1]); value = json.loads(p.read_text())
+if sys.argv[2] == 'contracts': value['contracts']['README.md'] = '0' * 64
+else: value[sys.argv[2]] = 'wrong'
+p.write_text(json.dumps(value))
+PY
+  : >"$command_log"
+  if run_upgrade >"$fixture_root/error" 2>&1; then fail "invalid $mutation accepted"; fi
+  ! grep -q '^installer ' "$command_log" || fail 'invalid review reached validation/deployment'
+  cp "$fixture_root/review-original" "$review_file"
 done
-printf 'PASS Go Task exposes the canonical upgrade task and legacy alias\n'
+printf 'PASS missing, stale and incompatible reviews fail closed\n'
+
+: >"$command_log"
+run_upgrade >"$fixture_root/prepared"
+grep -q 'image: nousresearch/hermes-agent:v2' "$fixture_repo/docker/docker-compose.yml" || fail 'pin not prepared'
+grep -qx 'installer validate' "$command_log" || fail 'candidate not validated'
+! grep -q '^installer deploy' "$command_log" || fail 'preparation deployed'
+grep -q 'NOT committed, pushed or deployed' "$fixture_root/prepared" || fail 'missing scope of evidence'
+printf 'PASS candidate validated without commit, push or deployment\n'
+
+: >"$command_log"
+if run_upgrade >"$fixture_root/retry" 2>&1; then fail 'same pin retry returned success'; fi
+! grep -q '^installer ' "$command_log" || fail 'retry silently deployed'
+printf 'image: nousresearch/hermes-agent:v1\n' >"$fixture_repo/docker/docker-compose.yml"
+make_review
+if FAIL_VALIDATE=yes run_upgrade >"$fixture_root/error" 2>&1; then fail 'candidate validation failure swallowed'; fi
+grep -q 'image: nousresearch/hermes-agent:v2' "$fixture_repo/docker/docker-compose.yml" || fail 'failed candidate diff must remain inspectable'
+if run_upgrade >"$fixture_root/retry" 2>&1; then fail 'failed validation retry returned success'; fi
+printf 'PASS failed validation and retry stay failures\n'
+
+: >"$command_log"
+if HERMES_DEPLOY_HOST='' run_upgrade >"$fixture_root/error" 2>&1; then fail 'same pin unexpectedly prepared'; fi
+grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" || fail 'legacy host resolution lost'
+for task_name in update:hermes hermes:update; do
+  task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" >"$fixture_root/task" 2>&1
+  grep -q './scripts/hermes_upgrade.sh' "$fixture_root/task" || fail 'legacy task alias lost'
+done
+printf 'PASS task aliases and legacy host lookup preserved\n'

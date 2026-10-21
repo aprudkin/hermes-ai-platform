@@ -6,6 +6,21 @@
 ansible/inventory.ini
 .generated/
 
+# Private runtime state and recovery artifacts (never project source)
+/backups/
+/backup/
+/data/
+/recovery/
+*.tar
+*.tar.gz
+*.tgz
+*.age
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
 # Terraform state and providers
 .terraform/
 *.tfstate
@@ -14,9 +29,11 @@ crash.log
 crash.*.log
 *.tfplan
 
-# Ansible runtime artifacts
+# Ansible/Python runtime artifacts
 *.retry
 ansible/facts/
+.ansible/
+__pycache__/
 
 # Local editor and OS files
 .DS_Store

@@ -1,6 +1,18 @@
-# Operations status
+# Maintain the existing Hermes installation
 
-Implemented local and deployment-time checks:
+Start with the current host, not a new infrastructure plan. After authorized
+read-only access, check the selected profile, container/image, loopback health,
+disk space and age/location of the last verified independent backup. Do not
+print credentials, conversation logs or Docker environment values into shared
+output. Health does not prove inference, Telegram behavior or recoverability.
+Routine inspection does not require full Ansible reconciliation or a restart.
+
+Keep personal changes in the host-backed data volume; preserve Чеби's live
+identity and cancelled-job decisions. Before changes that may affect state,
+capture and verify an independent backup. For recovery or a server move follow
+[the recovery procedure](backup-restore.md), not the original platform roadmap.
+
+Available local and deployment-time checks:
 
 - Terraform format and schema validation without apply;
 - Ansible syntax/lint and post-deployment runtime verification;
@@ -74,47 +86,33 @@ setting does not select an STT provider and is separate from the UI language.
 ## Hermes backups
 
 Run `task backup:hermes` (short alias `task b:hermes`; legacy alias
-`task hermes:backup`) to create a verified **personal-state backup**. It keeps
-configuration/authentication, memory/history, custom skills and jobs, and custom
-application source/data from `/opt/hermes/data` and `/opt/hermes/app`. Recognized
-caches and dependency environments are excluded; no Docker image is exported.
-Small runtime metadata, a Compose definition and a manual recovery guide are
-included. Restore requires a separately installed image and dependencies.
+`task hermes:backup`) to create and verify a **full recovery bundle** on the
+controller computer. It retains state, dependencies and the exact current
+Docker image. The existing global catalog exposes the same task from any
+directory as `task -g backup:hermes` / `task -g b:hermes` (or `t b:hermes`).
+The global launcher remains a thin project-task delegation, like other backups.
 
-The task uses `HERMES_DEPLOY_HOST` when set; otherwise it resolves the host from
-local Terraform state. Set `HERMES_DEPLOY_SSH_USER` and
-`HERMES_DEPLOY_SSH_PRIVATE_KEY` for SSH. The controller requires Python 3; the
-server requires Python 3, Docker access and GNU tar. Bundles default to
-`~/backup/hermer/hermes-personal-<timestamp>-<pid>.tar.gz`; set
-`HERMES_BACKUP_DIR` to choose another local destination.
+The default destination is `~/backup/hermer/hermes-recovery-<timestamp>-<pid>.tar.gz`.
+`HERMES_BACKUP_DIR` selects another local destination. Capture uses the configured
+`hermes-minimal` SSH alias unless overridden; see the [full recovery guide](backup-restore.md)
+for connection inputs, permissions, space and consistency requirements. Run from
+the owner's computer or another independent controller, not the source container.
 
-One filtered state snapshot is staged privately on the server. The free-space
-check covers retained state and metadata overhead, not an image or excluded
-caches. Compression streams to the controller, which verifies the transfer
-using temporary uncompressed payloads before publishing the final archive.
-The container is paused only while the state snapshot is written locally,
-then unpaused before compression and network transfer. Cleanup attempts to release its owned pause on failure. A failed
-unpause is an error; check the actual container state before continuing. Do not
-deploy or edit server state concurrently with a backup.
+This intentionally changes the ordinary Task default from personal to full.
+`task backup:hermes:full` remains equivalent. For the previous lightweight behavior,
+use `task backup:hermes:personal` / `task b:hermes:personal` in this project.
+The direct `./scripts/hermes_backup.sh` CLI without flags still uses personal
+mode; `--full` selects full mode. See [personal backup](personal-backup.md) for
+its exclusions and separately required image/dependency reconstruction.
 
-Before publishing the mode-0600 final archive, the task verifies the bundle
-personal-state format, required contents and payload hashes. This is not proof of a
-successful live restore. The bundle contains credentials and is not encrypted;
-protect its storage and transfer. It does not copy the entire host, controller
-SSH keys, Terraform state or external service settings, and does not configure
-a schedule, retention, automatic restore or cloud storage. Legacy data-only
-archives and full recovery bundles cannot masquerade as personal-state backups.
-
-See [Hermes settings and personal-state backup](personal-backup.md) for exact
-exclusions, resource requirements and manual recovery boundaries. That guide is
-included as `RESTORE.md`. Unknown files and custom binaries are retained; the
-backup is not a promise of a small, fixed archive size.
-
-For explicit self-contained migration, `./scripts/hermes_backup.sh --full`
-retains dependencies and the installed image in the existing
-`hermes-recovery-*.tar.gz` format. See the
-[full recovery guide](backup-restore.md). Existing archives are not rewritten or
-deleted when the ordinary backup default changes.
+Both modes temporarily pause the source for the snapshot, resume it before
+compression/transfer, and verify the received archive before publishing its
+mode-0600 final name. A failed unpause is an error, not success. Do not deploy or
+edit state concurrently. These commands do not restore, deploy, upload to a cloud,
+configure a schedule or delete existing backups. Verification is not proof of a
+working restored installation. Archives contain credentials and remain
+**unencrypted**; protect storage and transport. Whole-host files, controller keys,
+Terraform state and external accounts remain outside the bundle boundary.
 
 ## Hermes image updates
 
@@ -123,20 +121,22 @@ verified **full** recovery bundle, including the current image and deployed
 app/data state, then contacts GitHub for the latest stable
 `nousresearch/hermes-agent` release.
 
-The task requires `HERMES_DEPLOY_SSH_USER`, `HERMES_DEPLOY_SSH_PRIVATE_KEY`,
-`HERMES_DEPLOY_SSH_PUBLIC_KEY`, `HERMES_DEPLOY_SSH_SOURCE_CIDR`,
-`HERMES_MODEL_PROVIDER`, and `HERMES_MODEL`. It resolves an omitted
-`HERMES_DEPLOY_HOST` from the local Terraform state's `server_ipv4` output;
-set that variable to explicitly target a different existing host. Set exactly
-one credential source: `HERMES_CODEX_AUTH` for `openai-codex`, otherwise
-`HERMES_ENV`. Values remain outside the repository. The SSH client uses
-batch-mode trust on first use: it records an unknown host key and rejects any
-later key change.
+**This command now prepares a local change only.** It never commits, pushes or
+deploys, even if preparation succeeds. The old `CONFIRM_PUSH` and
+`CONFIRM_DEPLOY` variables are rejected before remote access; unset them rather
+than reusing an old unattended invocation. Existing task aliases are retained.
 
-If the current pin is already the latest stable release, the task exits after
-the verified backup and neither pushes nor deploys. Otherwise it requires a
-compatibility review JSON file named by `HERMES_UPGRADE_REVIEW_FILE` before it
-can change the pin. Review the exact upstream release notes, current image-related
+Preparation requires a clean checkout, `HERMES_DEPLOY_SSH_USER` and
+`HERMES_DEPLOY_SSH_PRIVATE_KEY` for backup, and preferably explicit
+`HERMES_DEPLOY_HOST`. The omitted host retains the legacy Terraform `server_ipv4`
+lookup. No provider credentials are needed just to prepare a pin. SSH uses
+`accept-new` trust on first use; confirm the intended host fingerprint separately.
+
+If the local pin already matches the release, preparation returns nonzero after
+the verified backup: **live deployment is unknown**. This intentionally replaces
+the old successful no-op, which could conceal a previous deployment failure.
+Otherwise it requires a compatibility review JSON file named by
+`HERMES_UPGRADE_REVIEW_FILE` before changing the pin. Review the exact upstream release notes, current image-related
 project contracts, and run `./installer/install.sh validate` first. The JSON
 must use the JSON keys `tag`, `release_notes_url`, `compatibility`, `summary`,
 `contracts` (path-to-SHA-256 map), and `checks` (command/result records). It must
@@ -149,11 +149,40 @@ or incompatible evidence. Keep the review file outside the repository so it does
 not make the clean-worktree check fail. The review remains an operator
 attestation; the script cannot independently judge release compatibility.
 
-After the review passes, the task requires a clean worktree, updates only
-`docker/docker-compose.yml`, and requires `CONFIRM_PUSH=yes` immediately before
-pushing the current branch and `CONFIRM_DEPLOY=yes` immediately before the
-existing-host deployment. The installer's own `--confirm-external-mutation` gate
-remains in force.
+After review, preparation updates only `docker/docker-compose.yml` and runs the
+strict `./installer/install.sh validate` gate against the **candidate** pin.
+If it fails, the command fails and leaves the diff for inspection. It does not
+reset Git, weaken the gate or proceed to publication. Correct/review that diff
+and rerun the strict gate; do not mistake rerunning preparation for deployment.
 
-Automated restore, monitoring/alerting, DNS, TLS, public dashboard/API access,
-and disaster recovery remain outside Minimal.
+### Publish, deploy, verify — separate decisions
+
+1. Inspect the candidate diff and validation output. Update release-specific
+   contracts where needed; repeat validation after those edits. Publish only
+   reviewed changes on an appropriate branch/PR under the repository's Git rules.
+   Neither the commit nor a merge records successful runtime deployment.
+2. Immediately before a separately authorized update, retain a recent verified
+   **full** off-server bundle and agree on rollback/maintenance time. A backup
+   captured during preparation can become stale before deployment.
+3. Use the existing-host deployment interface in [INSTALLATION_GUIDE.md](../INSTALLATION_GUIDE.md)
+   with the explicit host, SSH public/private keys, source CIDR, selected
+   provider/model and exactly one credential source. Preserve the installer's
+   `--confirm-external-mutation` gate. Check the current runtime configuration
+   before reconciling; leave `hermes_replace_profile_identities` false. This is
+   a real deployment, not a local test or a recovery command.
+4. On failure, record the nonzero result, inspect actual image/service state and
+   partial changes before another action. Retry the **explicit deployment**
+   against the reviewed pin only after reauthorization; do not rerun the pin
+   preparation command as a deployment retry. The installer does not gate
+   deployment on whether Git's pin changed, so a same-pin deployment is possible.
+5. Check actual image/profile, health, identity preservation, memory/history,
+   applications and the separately authorized model/Telegram controls above.
+   Report local validation, published pin, deployed runtime and behavior separately.
+
+A failed upgrade may already have changed runtime state. Do not blindly start
+an older image over migrated databases. Use the retained full bundle on a clean
+isolated target and the [recovery/cutover procedure](backup-restore.md) if rollback
+requires old state. Preserve newer state before deciding to discard it.
+
+No automatic restore/start, cloud storage, monitoring, DNS, TLS or public API
+is introduced by this maintenance workflow.

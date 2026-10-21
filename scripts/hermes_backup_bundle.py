@@ -49,11 +49,16 @@ def require(condition, message):
         raise BundleError(message)
 
 
-def run(args, timeout=60):
+def run(args, timeout=60, reject_diagnostics=False):
     # Neither Docker inspect output nor command stderr may reach the terminal.
     try:
-        return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              check=True, timeout=timeout).stdout
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                check=True, timeout=timeout)
+        # GNU tar can warn about failed ACL/xattr writes and still exit zero.
+        # Restore is fail-closed even for such warnings, without leaking paths.
+        require(not reject_diagnostics or not (result.stdout or result.stderr),
+                "restore diagnostics reported; destination is incomplete (details withheld)")
+        return result.stdout
     except (subprocess.SubprocessError, OSError):
         raise BundleError("external command failed or timed out") from None
 
@@ -299,7 +304,29 @@ def interrupted(signum, frame):
     raise BundleError("capture interrupted or timed out")
 
 
+def stage_reporter(location):
+    """Only fixed stage labels/timings, never runtime paths or command output."""
+    started = previous = time.monotonic()
+
+    def report(label):
+        nonlocal previous
+        now = time.monotonic()
+        def duration(value):
+            seconds = max(0, int(value))
+            return f"{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
+        try:
+            print(f"[{location} elapsed {duration(now - started)} | previous stage {duration(now - previous)}] {label}",
+                  file=sys.stderr, flush=True)
+        except OSError:
+            # Display failure must never interrupt an owned pause/unpause sequence.
+            pass
+        previous = now
+    return report
+
+
 def capture(root_arg, name, scope="full"):
+    progress = stage_reporter("source")
+    progress("Checking runtime, capture lock and available space")
     require(scope in ("personal", "full"), "unsupported backup scope")
     personal = scope == "personal"
     payloads = PERSONAL_PAYLOADS if personal else PAYLOADS
@@ -339,18 +366,21 @@ def capture(root_arg, name, scope="full"):
             (stage / "RESTORE.md").write_text(RESTORE_GUIDE, encoding="utf-8")
             (stage / "verify.py").write_text(BUNDLE_SOURCE, encoding="utf-8")
             if not personal:
+                progress("Saving Docker image on source (container not paused by this capture)")
                 run(["docker", "image", "save", "--output", str(stage / "image.tar"), image_id], timeout=900)
             owned_pause = False
             try:
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Running")
                         and not current["State"].get("Paused"), "container changed before pause")
+                progress("Pausing source for the state snapshot")
                 # Set intent first: Docker can pause successfully then report an error.
                 owned_pause = True
                 run(["docker", "pause", container_id])
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during pause")
+                progress("Snapshotting state on source (pause confirmed)")
                 diff = layer_diff(container_id)
                 if personal:
                     personal_snapshot(root, stage)
@@ -360,6 +390,7 @@ def capture(root_arg, name, scope="full"):
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during snapshot")
+                progress("Unpausing source after snapshot")
                 run(["docker", "unpause", container_id])
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Running")
@@ -377,6 +408,7 @@ def capture(root_arg, name, scope="full"):
                     finally:
                         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
                             signal.signal(signum, interrupted)
+            progress("Source unpause confirmed; hashing snapshot and image payloads")
             signal.alarm(5400)
             manifest = {"format": PERSONAL_FORMAT if personal else FORMAT, "version": 1,
                         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -392,11 +424,13 @@ def capture(root_arg, name, scope="full"):
             write_json(stage / "manifest.json", manifest)
             # Stream after unpause: do not duplicate the archive or verification
             # payloads on the server. The controller verifies before publication.
+            progress("Compressing and transmitting archive; source is no longer paused by this capture")
             try:
                 with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz") as archive:
                     for name in ["manifest.json"] + sorted(payloads):
                         archive.add(stage / name, arcname=name, recursive=False)
                 sys.stdout.buffer.flush()
+                progress("Archive stream sent; controller integrity verification still required")
             finally:
                 signal.alarm(0)
 
@@ -604,7 +638,9 @@ def validate_image(path, expected):
         zero_tail(archive.fileobj)
 
 
-def verify(bundle, scope=None):
+def verify(bundle, scope=None, progress=None):
+    progress = progress or (lambda label: None)
+    progress("Decompressing archive and checking payload hashes")
     require(scope in (None, "personal", "full"), "unsupported backup scope")
     # A private staging copy bounds memory regardless of state/image size. It
     # writes opaque tar bytes only, never extracts caller-controlled filenames.
@@ -675,9 +711,49 @@ def verify(bundle, scope=None):
                                                                    personal=personal), "restore configuration mismatch")
         require((stage / "RESTORE.md").stat().st_size > 0 and (stage / "verify.py").stat().st_size > 0,
                 "empty recovery instructions or verifier")
+        progress("Checking state archive structure and recovery metadata")
         validate_state(stage / "state.tar", source["profile"], personal=personal)
         if not personal:
+            progress("Checking saved Docker image identity and layer hashes")
             validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
+    return manifest
+
+
+def restore_state(bundle, destination):
+    """Restore trusted bytes only; never load images, run hooks or start services.
+
+    GNU tar retains numeric owners/ACLs/xattrs. Use a new compatible Linux target
+    and a trusted private parent; failures retain a partial destination for
+    inspection and must never be treated as a completed restore.
+    """
+    os.umask(0o077)
+    require(destination.is_absolute() and destination.parent.is_dir()
+            and destination.parent == destination.parent.resolve(),
+            "restore destination needs an absolute path and a real existing parent")
+    require(not os.path.lexists(destination), "restore destination already exists")
+    require(b"GNU tar" in run(["tar", "--version"]), "restore requires GNU tar on compatible Linux")
+    with tempfile.TemporaryDirectory(prefix="hermes-restore-") as tmp:
+        # Verify and consume the same private copy, not a mutable source path.
+        private = Path(tmp) / "bundle.tar.gz"
+        shutil.copyfile(bundle, private)
+        manifest = verify(private)
+        destination.mkdir(mode=0o700)  # exclusive; refuse a concurrently created target
+        recovery = destination / ".recovery"
+        recovery.mkdir(mode=0o700)
+        with tarfile.open(private, "r:gz") as archive:
+            for member in archive:
+                # verify() admitted only fixed regular outer payload names.
+                with archive.extractfile(member) as source, (recovery / member.name).open("xb") as out:
+                    shutil.copyfileobj(source, out)
+        run(["tar", "--extract", "--file", str(recovery / "state.tar"),
+             "--directory", str(destination), "--numeric-owner", "--same-owner",
+             "--same-permissions", "--acls", "--xattrs", "--xattrs-include=*"],
+            timeout=5400, reject_diagnostics=True)
+        # Compare bytes/basic stat metadata. GNU tar does not compare ACL/xattr
+        # values; extraction warnings above fail closed, but are not readback.
+        run(["tar", "--compare", "--file", str(recovery / "state.tar"),
+             "--directory", str(destination), "--numeric-owner"],
+            timeout=5400, reject_diagnostics=True)
     return manifest
 
 
@@ -691,14 +767,18 @@ def main():
             sys.stdout.write("RESTORE_GUIDE = " + repr(guide) + "\nBUNDLE_SOURCE = " + repr(source) + "\n" + source)
         elif len(args) in (3, 4) and args[0] == "capture":
             capture(args[1], args[2], args[3] if len(args) == 4 else "full")
-        elif len(args) in (2, 3) and args[0] == "verify":
-            manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None)
+        elif len(args) == 3 and args[0] == "restore-state":
+            restore_state(Path(args[1]), Path(args[2]))
+            print("Archive verified; state extracted and compared. Runtime NOT started or verified.")
+        elif len(args) in (2, 3) and args[0] in ("verify", "verify-progress"):
+            progress = stage_reporter("verification") if args[0] == "verify-progress" else None
+            manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None, progress=progress)
             if manifest["format"] == PERSONAL_FORMAT:
                 print("Personal bundle integrity and retained state verified; reinstall/restore not tested.")
             else:
                 print("Recovery bundle integrity and structure verified; restore not tested.")
         else:
-            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full]")
+            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full] | verify-progress BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
         return 0
     except BundleError as error:
         # BundleError messages are fixed developer strings, never runtime data.

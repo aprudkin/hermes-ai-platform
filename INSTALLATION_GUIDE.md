@@ -1,4 +1,10 @@
-# Installation guide
+# Supporting installation and deployment guide
+
+Use this only for explicitly authorized bootstrap or deployment. The primary
+workflow is [maintenance and independent recovery](README.md). Historical
+Minimal terminology below describes the existing tool boundary, not a roadmap
+to execute. For a recovered installation, use [the recovery guide](docs/backup-restore.md)
+instead of reconciling its private state with the full installer.
 
 ## Supported boundary
 

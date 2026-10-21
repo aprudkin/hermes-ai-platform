@@ -3,12 +3,48 @@ version: '3'
 tasks:
   backup:hermes:
     aliases: [b:hermes, hermes:backup]
-    desc: Back up Hermes settings and personal state without images or caches
+    desc: Create and verify a full Hermes recovery bundle on this computer
+    summary: |
+      Full state, dependencies and the current image; briefly pauses the source container.
+      Defaults to SSH alias hermes-minimal and local directory ~/backup/hermer.
+      HERMES_DEPLOY_HOST and HERMES_BACKUP_DIR override the source and destination.
+      No cloud upload, retention deletion, restore or deployment.
+      The global launcher exposes this same task as task -g backup:hermes / task -g b:hermes.
+    cmds:
+      - ./scripts/hermes_backup.sh --full
+
+  backup:hermes:personal:
+    aliases: [b:hermes:personal]
+    desc: Back up personal state only; excludes the image and recognized dependencies/caches
     cmds:
       - ./scripts/hermes_backup.sh
 
+  backup:hermes:full:
+    desc: Capture state, dependencies and exact image for recovery (remote pause)
+    cmds:
+      - ./scripts/hermes_backup.sh --full
+
+  backup:hermes:cloud:
+    desc: Upload an existing full bundle through Mail.ru crypt and verify its recovery-config download
+    summary: |
+      Requires HERMES_BACKUP_FILE and explicit HERMES_CONFIRM_CLOUD_UPLOAD=1.
+      Uses the separate protected Hermes rclone configs; see docs/cloud-backup.md.
+      No new server capture, restore, deletion, schedule or global launcher changes.
+    cmds:
+      - python3 scripts/hermes_cloud_backup.py
+
+  verify:hermes:
+    desc: Verify HERMES_BACKUP_FILE locally; no restore or server access
+    cmds:
+      - python3 scripts/hermes_backup_bundle.py verify "${HERMES_BACKUP_FILE:?Set HERMES_BACKUP_FILE to a trusted archive}"
+
+  restore:hermes:state:
+    desc: Restore HERMES_BACKUP_FILE into new HERMES_RESTORE_DIR on Linux; never start Hermes
+    cmds:
+      - python3 scripts/hermes_backup_bundle.py restore-state "${HERMES_BACKUP_FILE:?Set HERMES_BACKUP_FILE}" "${HERMES_RESTORE_DIR:?Set HERMES_RESTORE_DIR to a new absolute directory}"
+
   update:hermes:
     aliases: ['hermes:update']
-    desc: Back up Hermes, pin the latest stable release, push, and deploy
+    desc: Back up and prepare a validated image pin; never commit, push or deploy
     cmds:
       - ./scripts/hermes_upgrade.sh

@@ -1,4 +1,8 @@
-# Minimal architecture
+# One persistent agent and supporting deployment tools
+
+The current purpose is maintenance, independent backup and recovery of one
+Hermes installation. The historical Minimal boundary below describes existing
+bootstrap code, not a requirement to expand the platform. See [state ownership](state-first.md).
 
 The installer has three boundaries: local validation, read-only planning, and
 explicitly confirmed external deployment. Terraform owns only the optional new

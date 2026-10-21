@@ -44,7 +44,8 @@ resolve_deploy_host() {
 }
 
 main() {
-  local backup_dir timestamp archive ssh_destination
+  local backup_dir timestamp archive ssh_destination elapsed
+  local started_seconds=$SECONDS
   local -a ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
   local scope=personal prefix=hermes-personal
   local guide="$repo_root/docs/personal-backup.md"
@@ -86,12 +87,16 @@ main() {
   # shellcheck disable=SC2029
   python3 "$repo_root/scripts/hermes_backup_bundle.py" program "$guide" | ssh \
     "${ssh_options[@]}" "$ssh_destination" \
-    "$remote_command" >"$temporary_archive"
+    "$remote_command" | python3 "$repo_root/scripts/hermes_backup_progress.py" \
+      receive "$((SECONDS - started_seconds))" >"$temporary_archive"
 
   [[ -s "$temporary_archive" ]] || fail "remote backup archive is empty"
-  python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "$temporary_archive" "$scope"
+  python3 "$repo_root/scripts/hermes_backup_progress.py" verify "$temporary_archive" "$scope" \
+    "$((SECONDS - started_seconds))"
   mv -- "$temporary_archive" "$archive"
-  printf 'Backup verified: %s\n' "$archive"
+  elapsed=$((SECONDS - started_seconds))
+  printf 'Backup verified: %s (elapsed %02d:%02d:%02d)\n' "$archive" \
+    "$((elapsed / 3600))" "$((elapsed / 60 % 60))" "$((elapsed % 60))"
 }
 
 main "$@"

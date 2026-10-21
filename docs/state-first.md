@@ -11,7 +11,13 @@ The active profile's `SOUL.md`, memory, skills, configuration and scheduled-job
 state live in the persistent data directory. The normal mapping is
 `/opt/hermes/data` on the host to `/opt/data` in the container. The manager
 profile therefore lives at `/opt/hermes/data/profiles/manager` on the host.
-Container replacement alone does not replace that mounted directory.
+Container replacement alone does not replace that mounted directory. Names,
+personal instructions, memory/history, skills, plugins, scripts, application
+data/databases and scheduler settings belong there. `/opt/hermes/app` holds the
+deployed Compose/gateway selection and rollback configuration. The container's
+writable image layer, `/tmp`, and unmounted host paths are not a substitute for
+persistent state; keep required custom dependencies inside the data boundary
+or explicitly document and back up their external home.
 
 `profiles/manager/SOUL.md` in this repository is a versioned snapshot of the
 operator-approved Chebi identity. Keep identity revisions deliberate and
@@ -54,7 +60,10 @@ The repository already provides:
   and retained dependencies for a planned migration.
 
 Both current bundle formats contain secrets and are **not encrypted by the
-existing scripts**. Protect transfers and storage; do not describe them as
+capture scripts**. A separate [Mail.ru cloud Task](cloud-backup.md) encrypts an
+existing full archive's remote copy through the approved crypt configuration,
+then verifies a recovery-config download; it does not encrypt the local archive.
+Protect transfers and storage; do not describe them as
 encrypted or upload them to a new recipient without a real implementation and
 an authorized destination. Local validation, checksums and an existing tar file
 are not proof of a successful live restore.
@@ -67,7 +76,9 @@ permissions; the current wrapper does not automatically add sudo.
 
 No off-server schedule, encryption service, storage account or new cloud
 resource is provisioned by this documentation change. In particular, it does
-not re-enable any cancelled Jira or bookkeeping reports.
+not re-enable any cancelled reports or mail monitoring. Before activating a
+restored snapshot, reconcile every scheduler against the owner's current
+approved job list; an older archive or template does not override cancellation.
 
 ## A planned move
 

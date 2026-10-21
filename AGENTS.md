@@ -1,19 +1,25 @@
-# Hermes AI Platform
+# Hermes: state-first maintenance
 
 ## Scope and architecture
 
-- Maintain one official Hermes Agent container on Ubuntu 24.04 or newer.
-  Manager, DevOps, Coding, and Research are upstream-supported profiles inside
-  that runtime, with separate identities, sessions, skills, and memory—not
-  separate Hermes Core instances. Read `docs/architecture.md` when changing
-  runtime boundaries.
-- Minimal covers stages 00–04. Optimal (05–10), Advanced (11–19), and Maximum
-  (20–31) are project roadmap levels, not upstream feature claims. Verify the
-  preceding level before implementing the next; bring later features into
-  Minimal only for a concrete dependency with a documented reason.
-- Minimal excludes databases, Redis, public dashboard/API exposure, private
-  cloud networking, monitoring, and automated restore. Do not invent upstream
-  capabilities or production placeholders to satisfy roadmap labels.
+- Maintain one persistent Hermes Agent on Ubuntu 24.04 or newer. Prioritize
+  existing-installation care, independent backups, recovery and deliberate
+  updates/migration. The active `manager` identity is Чеби (Chebi), not a generic
+  task manager. Other profile templates are optional compatibility assets
+  inside the same runtime, not separate services to develop.
+- The old Minimal/Optimal/Advanced/Maximum roadmap is historical, not an
+  implementation queue. Infrastructure expansion requires a concrete current
+  need and an explicit task. Prefer the existing working tools.
+- Read `docs/architecture.md` when changing runtime boundaries. Before backup,
+  restore or migration changes, read `docs/state-first.md`,
+  `docs/personal-backup.md` and `docs/backup-restore.md`. Preserve runtime-owned
+  identity, memory/history, skills, plugins, scripts, app data and job settings.
+  Git holds approved instructions/code, never private state, databases or backups.
+- Recovery is restore → isolated checks → single-owner cutover → functional
+  verification. Never auto-start restored credentials/jobs or revive cancelled
+  reports/mail monitoring. Retain the old installation until owner acceptance.
+  Distinguish archive creation, integrity verification, data restoration and
+  verified restored runtime; none implies the next.
 - Production paths must not contain TODOs, mocks, sample data, fabricated
   images, echo-only installers/validators, empty skeletons, hard-coded success,
   or checks incapable of failing on broken behavior. Empty credential-template
@@ -103,9 +109,10 @@ Run these commands from the repository root; their definitions are in
   infer behavioral success from syntax, health, or connected-log checks.
 - Before an authorized image upgrade, read `docs/operations.md` and inspect
   `scripts/hermes_upgrade.sh`. `task hermes:update` is not a local check: it
-  backs up remote state before release lookup and may commit, push, and deploy.
-  Preserve its backup and confirmation gates; check its generated commit
-  against applicable commit rules before using the automated delivery path.
+  captures a remote full backup before release lookup, then prepares and validates
+  a local pin only. Commit/push and authorized deployment are separate actions.
+  Local pin equality must never imply live deployment success; inspect a failed
+  deployment and retry explicitly, without weakening validation gates.
 
 ## Agent skills
 

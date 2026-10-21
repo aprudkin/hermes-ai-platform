@@ -157,6 +157,32 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         path.write_bytes(result.stdout)
         return path
 
+    def test_capture_reports_real_stages_in_order_without_archive_contamination(self):
+        result = self.capture()
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        stages = [b"Checking runtime", b"Saving Docker image", b"Pausing source",
+                  b"Snapshotting state", b"Unpausing source", b"Source unpause confirmed",
+                  b"Compressing and transmitting", b"Archive stream sent"]
+        positions = [result.stderr.index(stage) for stage in stages]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(b"previous stage", result.stderr)
+        path = self.base / "progress.tar.gz"
+        path.write_bytes(result.stdout)
+        checked = subprocess.run([sys.executable, str(HELPER), "verify-progress", str(path), "full"],
+                                 capture_output=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr.decode())
+        for stage in (b"Decompressing", b"Checking state archive", b"Checking saved Docker image"):
+            self.assertIn(stage, checked.stderr)
+        self.assertNotIn(b"secret-fixture", result.stderr + checked.stderr)
+        self.assertNotIn(b"secret-value", result.stderr + checked.stderr)
+
+    def test_unpause_failure_never_reports_hashing_or_transmission(self):
+        result = self.capture(fail="unpause")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"Source unpause confirmed", result.stderr)
+        self.assertNotIn(b"Compressing and transmitting", result.stderr)
+        self.assertEqual(result.stdout, b"")
+
     def verify(self, path, helper=HELPER, scope=None):
         args = [sys.executable, str(helper), "verify", str(path)]
         if scope is not None:
@@ -177,6 +203,110 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
                 if member.name == duplicate:
                     self.add_bytes(dest, member.name, contents)
         return target
+
+    @unittest.skipUnless(b'GNU tar' in subprocess.check_output(['tar', '--version']),
+                         'restore metadata/compare requires native GNU tar (Linux CI)')
+    def test_restore_state_offline_without_docker_or_old_server(self):
+        bundle = self.bundle()
+        target = self.base / 'restored'
+        # Test the embedded helper: recovery must not need the old server/repo.
+        helper = self.base / 'offline-verify.py'
+        with tarfile.open(bundle) as archive:
+            helper.write_bytes(archive.extractfile('verify.py').read())
+        # Capture and restoration use native GNU tar, including metadata/compare.
+        for scope in ('full', 'personal'):
+            with self.subTest(scope=scope):
+                source = bundle if scope == 'full' else self.bundle(scope='personal')
+                destination = target / scope
+                target.mkdir(exist_ok=True)
+                before = [line for line in self.log.read_text().splitlines() if line.startswith('docker ')]
+                result = subprocess.run([sys.executable, str(helper), 'restore-state', str(source),
+                                         str(destination)], env=self.env, capture_output=True)
+                after = [line for line in self.log.read_text().splitlines() if line.startswith('docker ')]
+                self.assertEqual(after, before, 'restore must not invoke Docker at all')
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual((destination / 'data/profiles/manager/SOUL.md').read_bytes(),
+                                 (self.root / 'data/profiles/manager/SOUL.md').read_bytes())
+                self.assertTrue((destination / '.recovery/compose.restore.json').is_file())
+                self.assertEqual((destination / '.recovery/image.tar').exists(), scope == 'full')
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o700)
+                self.assertIn(b'Runtime NOT started or verified', result.stdout)
+                again = subprocess.run([sys.executable, str(helper), 'restore-state', str(source),
+                                        str(destination)], env=self.env, capture_output=True)
+                self.assertNotEqual(again.returncode, 0)
+
+    def test_restore_rejects_corruption_without_creating_target(self):
+        bundle = self.bundle()
+        bad = self.rewrite_bundle(bundle, omit='state.tar')
+        target = self.base / 'must-not-exist'
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        # Isolate only the GNU capability probe; verification remains real even
+        # on macOS, so this cannot pass merely because GNU tar is unavailable.
+        with mock.patch.object(helper, 'run', return_value=b'GNU tar') as commands:
+            with self.assertRaises((helper.BundleError, OSError)):
+                helper.restore_state(bad, target)
+        self.assertEqual(commands.call_count, 1)
+        self.assertFalse(target.exists())
+
+    def test_restore_refuses_existing_directory_and_dangling_symlink(self):
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for kind in ('directory', 'symlink'):
+            target = self.base / kind
+            if kind == 'directory':
+                target.mkdir()
+            else:
+                target.symlink_to(self.base / 'missing')
+            with mock.patch.object(helper, 'run') as commands:
+                with self.assertRaisesRegex(helper.BundleError, 'already exists'):
+                    helper.restore_state(self.base / 'irrelevant', target)
+                commands.assert_not_called()
+
+    def test_restore_rejects_success_exit_with_diagnostics(self):
+        bundle = self.bundle()
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for phase in ('--extract', '--compare'):
+            for stream in ('stdout', 'stderr'):
+                with self.subTest(phase=phase, stream=stream):
+                    target = self.base / (phase + stream)
+                    def result(args, **kwargs):
+                        output = {'stdout': b'', 'stderr': b''}
+                        if args == ['tar', '--version']:
+                            output['stdout'] = b'GNU tar'
+                        elif phase in args:
+                            output[stream] = b'tar: secret-path: Cannot set xattr: Operation not permitted'
+                        return subprocess.CompletedProcess(args, 0, **output)
+                    with mock.patch.object(helper.subprocess, 'run', side_effect=result):
+                        with self.assertRaisesRegex(helper.BundleError, 'restore diagnostics') as raised:
+                            helper.restore_state(bundle, target)
+                    self.assertNotIn('secret-path', str(raised.exception))
+                    self.assertTrue((target / '.recovery/state.tar').is_file())
+
+    def test_restore_tar_failures_never_report_success_or_remove_partial_data(self):
+        bundle = self.bundle()
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for failing_phase in ('--extract', '--compare'):
+            target = self.base / failing_phase
+            def command(args, **kwargs):
+                if args == ['tar', '--version']:
+                    return b'GNU tar'
+                if failing_phase in args:
+                    raise helper.BundleError('injected tar failure')
+                return b''
+            with mock.patch.object(helper, 'run', side_effect=command) as commands:
+                with self.assertRaisesRegex(helper.BundleError, 'injected tar failure'):
+                    helper.restore_state(bundle, target)
+            self.assertTrue((target / '.recovery/state.tar').is_file())
+            phases = [call.args[0][1] for call in commands.call_args_list]
+            self.assertEqual(phases, ['--version', '--extract'] +
+                             (['--compare'] if failing_phase == '--compare' else []))
 
     def test_bundle_layout_effective_config_and_embedded_verifier(self):
         path = self.bundle()
