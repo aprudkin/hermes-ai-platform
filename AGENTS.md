@@ -16,6 +16,7 @@ Read README.md and the relevant current guide before changing behavior:
 - `docs/state-first.md` and `docs/architecture.md`: ownership and runtime layout.
 - `docs/operations.md`: current maintenance and image-update boundaries.
 - `docs/personal-backup.md`, `docs/backup-restore.md`: capture and recovery.
+- `docs/migration.md`: provider-independent relocation, host-only settings and cutover.
 - `docs/cloud-backup.md`, `docs/server-backup.md`: explicit cloud/host workflows.
 
 ## Implementation

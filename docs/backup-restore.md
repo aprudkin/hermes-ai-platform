@@ -176,6 +176,31 @@ providers, run jobs or connect to Telegram. A verification
 failure blocks recovery until the cause is understood; do not compensate by
 extracting the failed bundle over a live installation.
 
+## Moving to a different hosting provider
+
+The same restoration procedure applies on a compatible provider's Linux/Docker
+host; matching image architecture, storage format and data ownership matters
+more than the provider name. A step-by-step route, including cloud retrieval
+without the source, is in the online
+[provider-migration guide](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/migration.md).
+The restoration commands below remain self-contained when this guide is used
+as the bundle's `RESTORE.md` without that checkout.
+
+Plan the host rebuild separately. `/etc/hermes-backup`,
+`/usr/local/lib/hermes-backup`, `/var/lib/hermes-backup`, `/var/log/hermes-backup`
+and its host systemd units are outside `app/data` and **not in this bundle**.
+Restore their cloud/decryption configuration from independent protected recovery
+material and deliberately reinstall/test the host backup workflow. Likewise,
+prepare SSH accounts/authorized keys, firewall, Docker and provider controls
+separately. A client key saved inside the data volume is not server-side SSH
+authorization; host-access aliases and pinned host keys may still name the old
+server. Verify the new host independently instead of disabling host-key checks.
+
+Do not enable new production polling, agent jobs or persistent backup timers
+during rehearsal. Stop/fence old owners before accepted cutover, retain rollback
+material and review cancelled jobs. Moving the files does not itself establish
+new-host authentication, external connectivity or a functioning daily backup.
+
 ## Prepare a clean target
 
 Use a separately authorized Ubuntu 24.04+ host with Docker Engine and the
