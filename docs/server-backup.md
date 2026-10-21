@@ -126,6 +126,14 @@ passed but later housekeeping/source checks did not. Only terminal `success`
 means the entire workflow completed. Neither status means restored data or a
 functionally verified restored runtime.
 
+Receipt updates use unique private staging names before an atomic rename. A
+crash may leave a staging file behind, including the older fixed `.json.new`
+format. Recognized private regular staging files are retained for inspection
+but ignored when loading successful receipts; they never authorize rotation.
+Symlinks, public staging files, oversized entries and unknown names still fail
+closed. A later run can therefore proceed without deleting or overwriting the
+interrupted evidence. Do not manually promote a staging file to a receipt.
+
 ## Prepared deployment procedure — not authorization to execute
 
 Use a targeted installation, **not the full Hermes installer/playbook**.
