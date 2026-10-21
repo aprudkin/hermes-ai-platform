@@ -1,188 +1,186 @@
-# Maintain the existing Hermes installation
+# Maintain Chebi's existing Hermes installation
 
-Start with the current host, not a new infrastructure plan. After authorized
-read-only access, check the selected profile, container/image, loopback health,
-disk space and age/location of the last verified independent backup. Do not
-print credentials, conversation logs or Docker environment values into shared
-output. Health does not prove inference, Telegram behavior or recoverability.
-Routine inspection does not require full Ansible reconciliation or a restart.
+This repository is a maintenance and recovery toolbox for one persistent agent:
+Чеби (Chebi), using the `manager` profile. It does not provision servers, install
+Docker or reconcile a new agent fleet. Start with the existing installation and
+[state ownership](state-first.md), not a fresh deployment.
 
-Keep personal changes in the host-backed data volume; preserve Чеби's live
-identity and cancelled-job decisions. Before changes that may affect state,
-capture and verify an independent backup. For recovery or a server move follow
-[the recovery procedure](backup-restore.md), not the original platform roadmap.
+After authorized read-only access, check the selected profile, actual container
+and image, loopback health, disk space and age/location of the last verified
+independent backup. Do not print credentials, conversation logs or Docker
+environment values into shared output. Routine inspection does not require a
+restart. Health alone does not prove inference, Telegram behavior or recovery.
 
-Available local and deployment-time checks:
+Keep personal changes in the host-backed data volume. Preserve Chebi's live
+identity and cancelled-job decisions. Before state-affecting changes, capture
+and verify an independent backup. For recovery or a server move follow
+[backup and restore](backup-restore.md).
 
-- Terraform format and schema validation without apply;
-- Ansible syntax/lint and post-deployment runtime verification;
-- Compose schema validation as a required strict-gate check, or an explicit
-  `SKIP` only in opportunistic `scripts/validate.sh --local` mode;
-- container health through the loopback Hermes `/health` endpoint;
-- profile existence through `hermes profile show`;
-- bounded Docker log rotation and persistent `/opt/hermes/data` state.
+## Local checks and their limits
 
-## Telegram gateway operations
+Run from the repository root:
 
-The implemented Telegram path manages one upstream long-polling process for
-one explicitly selected profile. The first intended production selection is
-`manager`; this is an instance choice, not the global default. Telegram privacy
-mode remains enabled, the bot requires only the minimum group-administrator
-permissions, and configured group messages dispatch only for a command, reply,
-or direct mention. No webhook or inbound port is added.
+| Purpose | Command | Boundary |
+| --- | --- | --- |
+| Strict validation | `./scripts/validate.sh --all` or `task validate` | Required local gate; inspect failures and skips, not only exit status. |
+| Opportunistic local checks | `./scripts/validate.sh --local` | Missing native tools may be skipped; not readiness proof. |
+| Static checks | `./scripts/validate.sh --static` | Repository structure, scripts, Compose and secret-pattern checks; no host access. |
+| Behavioral tests | `bash tests/run.sh` | Local fixtures; not evidence of live cloud, Docker runtime, inference or Telegram behavior. |
 
-Telegram configuration comes from a separate external mode-`0400`/`0600`
-six-key file. Enabling stores the original gateway profile once in
-`/opt/hermes/app/gateway-profile.pre-telegram`, records the managed profile,
-updates only that profile's marked Telegram block, and recreates only the
-Hermes service. Disabling removes only that block, restores the retained
-profile, recreates only the service, and preserves profiles, sessions, memory,
-provider credentials, Codex auth, API credentials, and rollback evidence.
+The retained Compose file is a recovery/reference configuration, not an
+installation interface. It uses host networking, a loopback health endpoint and
+persistent `/opt/hermes/data` state. Inspect the effective configuration and
+protected host inputs before any separately authorized runtime change. In
+particular, its default gateway-profile fallback is not proof that `manager`
+is selected. Do not print expanded secret-bearing Compose output.
 
-The contract is pinned to the upstream
-[Telegram guide](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/messaging/telegram.md)
-and [v2026.9.14 release](https://github.com/NousResearch/hermes-agent/releases/tag/v2026.9.14).
-Syntax, Compose configuration, container health, and bounded connected-log
-status are deployment evidence only and do not prove user-visible Telegram
-behavior.
+## Telegram and external side effects
 
-### Separately authorized production controls
+Keep one production gateway/long-polling owner for Chebi. Do not start a restored
+copy while the source still owns Telegram or scheduled jobs. Preserve the
+approved user/chat allowlists, privacy settings and mention/reply/command
+handling; passive observation of unmentioned messages requires its own explicit
+policy. No webhook or public API exposure is required by the recovery workflow.
 
-1. Record a successful Bot API identity check without sensitive fields.
-2. Prove webhook state is empty and exactly one long-polling owner exists.
-3. Prove the container and selected `manager` profile are healthy.
-4. Obtain a substantive DM response for every configured user.
-5. Obtain a substantive mention or reply response for every configured user in
-   a configured group.
-6. Deny an unconfigured user in a configured group.
-7. Deny a configured user in an unconfigured group.
-8. Prove an ordinary unmentioned group message causes no response and never
-   enters agent context.
-9. Re-run loopback API health and model inference controls.
-10. Independently read back profile selection, protected file modes, gateway
-    status, and retained rollback state without values.
+For an authorized Telegram or runtime change, record separately:
 
-Host connection, protected credential installation, service recreate/restart,
-Bot API probes, visible messages, group-administrator changes, and GitHub
-mutation remain separate approval boundaries. Passing local validation or CI
-does not authorize any of them.
+1. A successful Bot API identity check without sensitive fields.
+2. Empty webhook state for long polling and exactly one polling owner.
+3. The actual healthy container and selected `manager` profile.
+4. A substantive DM response for each configured user.
+5. A substantive mention/reply response for each configured user in an approved
+   group.
+6. Denial of an unconfigured user in an approved group.
+7. Denial of an approved user in an unconfigured group.
+8. The approved behavior of ordinary unmentioned group messages: no unsolicited
+   reply, and no context ingestion unless passive observation was authorized.
+9. Loopback API health and a separate actual model-inference check.
+10. Readback of profile selection, protected file modes, gateway status and
+    retained rollback configuration without exposing their values.
 
-Profile reconciliation follows the CLI contract in the pinned Hermes
-[`v2026.9.14` source](https://github.com/NousResearch/hermes-agent/tree/v2026.9.14).
-[`profile show`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/hermes_cli/profile_cmd.py)
-uses exit 1 with `does not exist` for a missing named profile, while
-[`config get`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/hermes_cli/config.py)
-uses exit 1 with `Config key not set` for a missing key. The role tolerates
-only those two documented absence results; every other non-zero query result
-fails before create or set operations.
+Syntax validation and connected logs do not establish those behaviors. Host
+access, protected credential installation, restart/recreation, Bot API probes,
+visible messages, group-administrator changes and Git publication are separate
+authorization boundaries. Passing local validation does not authorize them.
 
-The desired profile matrix also sets `stt.language=ru` for the default profile
-and every named profile. In pinned Hermes `v2026.9.14`, the global
-[`stt.language`](https://github.com/NousResearch/hermes-agent/blob/v2026.9.14/website/docs/user-guide/configuration.md#speech-to-text-stt)
-value is the language hint for every STT provider unless a provider-specific
-language overrides it; an empty value restores provider auto-detection. This
-setting does not select an STT provider and is separate from the UI language.
+## Local backups
 
-## Hermes backups
+Run `task backup:hermes` (aliases `task b:hermes` and `task hermes:backup`) from
+an independent controller to create and verify a **full recovery bundle**. It
+retains state, dependencies and the exact current Docker image.
+`task backup:hermes:full` is equivalent. Where the owner's existing global
+catalog delegates to this checkout, `task -g backup:hermes` / `task -g b:hermes`
+(or `t b:hermes`) invokes the same task; this repository does not install that
+catalog.
 
-Run `task backup:hermes` (short alias `task b:hermes`; legacy alias
-`task hermes:backup`) to create and verify a **full recovery bundle** on the
-controller computer. It retains state, dependencies and the exact current
-Docker image. The existing global catalog exposes the same task from any
-directory as `task -g backup:hermes` / `task -g b:hermes` (or `t b:hermes`).
-The global launcher remains a thin project-task delegation, like other backups.
+The default destination is
+`~/backup/hermer/hermes-recovery-<UTC timestamp>-<process id>.tar.gz`.
+`HERMES_BACKUP_DIR` selects another local destination. Both backup and image
+preparation default to the existing `hermes-minimal` SSH alias, using the
+controller's SSH configuration. `HERMES_DEPLOY_HOST` overrides the alias/address;
+`HERMES_DEPLOY_SSH_USER` and `HERMES_DEPLOY_SSH_PRIVATE_KEY` are optional overrides.
+A supplied key must be an existing regular file; empty values are unset. The
+alias remains the default even when only user/key is supplied. SSH uses
+`accept-new` on first use; confirm the intended host fingerprint separately.
 
-The default destination is `~/backup/hermer/hermes-recovery-<timestamp>-<pid>.tar.gz`.
-`HERMES_BACKUP_DIR` selects another local destination. Capture uses the configured
-`hermes-minimal` SSH alias unless overridden; see the [full recovery guide](backup-restore.md)
-for connection inputs, permissions, space and consistency requirements. Run from
-the owner's computer or another independent controller, not the source container.
+Run capture from the owner's computer or another independent controller,
+**not inside the source container that will be paused**. Choose a destination
+that is not a mount of the source server. See the [full recovery guide](backup-restore.md)
+for permissions, free space, supported runtime boundaries and failure cleanup.
 
-This intentionally changes the ordinary Task default from personal to full.
-`task backup:hermes:full` remains equivalent. For the previous lightweight behavior,
-use `task backup:hermes:personal` / `task b:hermes:personal` in this project.
-The direct `./scripts/hermes_backup.sh` CLI without flags still uses personal
-mode; `--full` selects full mode. See [personal backup](personal-backup.md) for
-its exclusions and separately required image/dependency reconstruction.
+For a lightweight bundle without an image or recognized dependencies/caches,
+use `task backup:hermes:personal` / `task b:hermes:personal`. The direct
+`./scripts/hermes_backup.sh` CLI without flags selects personal mode; `--full`
+selects full mode. See [personal backup](personal-backup.md) for exclusions and
+separately required image/dependency reconstruction.
 
-Both modes temporarily pause the source for the snapshot, resume it before
+Both modes pause the source for a crash-consistent snapshot, resume it before
 compression/transfer, and verify the received archive before publishing its
-mode-0600 final name. A failed unpause is an error, not success. Do not deploy or
-edit state concurrently. These commands do not restore, deploy, upload to a cloud,
-configure a schedule or delete existing backups. Verification is not proof of a
-working restored installation. Archives contain credentials and remain
-**unencrypted**; protect storage and transport. Whole-host files, controller keys,
-Terraform state and external accounts remain outside the bundle boundary.
+mode-`0600` final name. Failed unpause is an error. Do not edit source state
+concurrently. Local capture does not restore, deploy, upload, configure a
+schedule or delete existing backups. Archives contain credentials and are
+**plaintext**, not encrypted by these scripts. Whole-host files, controller keys
+and external accounts remain outside the bundle boundary.
 
-## Hermes image updates
+## Cloud copy and daily host backup
 
-`task update:hermes` (legacy alias `task hermes:update`) explicitly requests a
-verified **full** recovery bundle, including the current image and deployed
-app/data state, then contacts GitHub for the latest stable
-`nousresearch/hermes-agent` release.
+- [Explicit cloud copy](cloud-backup.md): `task backup:hermes:cloud` uploads an
+  existing full archive through the approved Mail.ru crypt configuration, then
+  downloads/decrypts it using the saved recovery config and verifies it again.
+  It does not capture new state, encrypt the local archive, schedule work or
+  delete old objects.
+- [Daily host backup](server-backup.md): a separate host systemd service/timer
+  captures outside the container, uploads through crypt, verifies readback and
+  applies narrowly receipted retention. Its installation, manual execution and
+  timer activation are distinct authorized actions. Repository files or a green
+  fixture test do not prove the schedule is installed or working.
 
-**This command now prepares a local change only.** It never commits, pushes or
-deploys, even if preparation succeeds. The old `CONFIRM_PUSH` and
-`CONFIRM_DEPLOY` variables are rejected before remote access; unset them rather
-than reusing an old unattended invocation. Existing task aliases are retained.
+Keep recovery keys available independently of the source host. Distinguish
+**archive created**, **integrity verified**, **state restored** and **restored
+runtime functionally tested** in every report. None implies the next.
 
-Preparation requires a clean checkout, `HERMES_DEPLOY_SSH_USER` and
-`HERMES_DEPLOY_SSH_PRIVATE_KEY` for backup, and preferably explicit
-`HERMES_DEPLOY_HOST`. The omitted host retains the legacy Terraform `server_ipv4`
-lookup. No provider credentials are needed just to prepare a pin. SSH uses
-`accept-new` trust on first use; confirm the intended host fingerprint separately.
+## Image-update preparation only
 
-If the local pin already matches the release, preparation returns nonzero after
-the verified backup: **live deployment is unknown**. This intentionally replaces
-the old successful no-op, which could conceal a previous deployment failure.
-Otherwise it requires a compatibility review JSON file named by
-`HERMES_UPGRADE_REVIEW_FILE` before changing the pin. Review the exact upstream release notes, current image-related
-project contracts, and run `./installer/install.sh validate` first. The JSON
-must use the JSON keys `tag`, `release_notes_url`, `compatibility`, `summary`,
-`contracts` (path-to-SHA-256 map), and `checks` (command/result records). It must
-record the exact release tag and official release-notes URL, a non-empty
-compatibility summary, `compatibility: "compatible"`, SHA-256 hashes for exactly
-`README.md`, `docs/operations.md`, and `docker/docker-compose.yml`, and a passed
-`./installer/install.sh validate` check. Contract hashes bind the review to the
-local content that was inspected; the gate rejects missing, stale, mismatched,
-or incompatible evidence. Keep the review file outside the repository so it does
-not make the clean-worktree check fail. The review remains an operator
-attestation; the script cannot independently judge release compatibility.
+`task update:hermes` (alias `task hermes:update`) captures and verifies a **full**
+backup before querying GitHub for the latest stable
+`NousResearch/hermes-agent` release. It prepares a local image-pin change only:
+**no automatic commit, push or deployment**. `CONFIRM_PUSH` and `CONFIRM_DEPLOY`
+are rejected before remote access; leave them unset.
 
-After review, preparation updates only `docker/docker-compose.yml` and runs the
-strict `./installer/install.sh validate` gate against the **candidate** pin.
-If it fails, the command fails and leaves the diff for inspection. It does not
-reset Git, weaken the gate or proceed to publication. Correct/review that diff
-and rerun the strict gate; do not mistake rerunning preparation for deployment.
+Preparation requires a clean checkout, the SSH connection described above,
+GitHub CLI access to release metadata, and the native strict-validation tools.
+It needs no server-provisioning credentials. If the local pin already equals
+the release, preparation returns nonzero after the verified backup: **live
+runtime deployment is unknown**, not a successful update.
 
-### Publish, deploy, verify — separate decisions
+Before changing the pin, supply `HERMES_UPGRADE_REVIEW_FILE` pointing to a
+compatibility review JSON file outside the repository. Review the exact official
+release notes and current image-related contracts, and run
+`./scripts/validate.sh --all` first. Required JSON fields are:
 
-1. Inspect the candidate diff and validation output. Update release-specific
-   contracts where needed; repeat validation after those edits. Publish only
-   reviewed changes on an appropriate branch/PR under the repository's Git rules.
-   Neither the commit nor a merge records successful runtime deployment.
-2. Immediately before a separately authorized update, retain a recent verified
-   **full** off-server bundle and agree on rollback/maintenance time. A backup
-   captured during preparation can become stale before deployment.
-3. Use the existing-host deployment interface in [INSTALLATION_GUIDE.md](../INSTALLATION_GUIDE.md)
-   with the explicit host, SSH public/private keys, source CIDR, selected
-   provider/model and exactly one credential source. Preserve the installer's
-   `--confirm-external-mutation` gate. Check the current runtime configuration
-   before reconciling; leave `hermes_replace_profile_identities` false. This is
-   a real deployment, not a local test or a recovery command.
-4. On failure, record the nonzero result, inspect actual image/service state and
-   partial changes before another action. Retry the **explicit deployment**
-   against the reviewed pin only after reauthorization; do not rerun the pin
-   preparation command as a deployment retry. The installer does not gate
-   deployment on whether Git's pin changed, so a same-pin deployment is possible.
-5. Check actual image/profile, health, identity preservation, memory/history,
-   applications and the separately authorized model/Telegram controls above.
-   Report local validation, published pin, deployed runtime and behavior separately.
+- `tag`: the exact release tag.
+- `release_notes_url`: `https://github.com/NousResearch/hermes-agent/releases/tag/<tag>`.
+- `compatibility`: exactly `"compatible"`.
+- `summary`: a nonempty compatibility explanation.
+- `contracts`: a path-to-SHA-256 map with exactly `README.md`,
+  `docs/operations.md` and `docker/docker-compose.yml`, hashing the exact reviewed
+  local bytes.
+- `checks`: command/result records including
+  `{"command":"./scripts/validate.sh --all","result":"passed"}`.
 
-A failed upgrade may already have changed runtime state. Do not blindly start
-an older image over migrated databases. Use the retained full bundle on a clean
-isolated target and the [recovery/cutover procedure](backup-restore.md) if rollback
-requires old state. Preserve newer state before deciding to discard it.
+Missing, stale, mismatched or incompatible review evidence fails the gate. The
+review is an operator attestation, not automatic compatibility analysis. Changes
+to any contract file invalidate its recorded hash.
 
-No automatic restore/start, cloud storage, monitoring, DNS, TLS or public API
-is introduced by this maintenance workflow.
+Preparation updates only `docker/docker-compose.yml` and runs
+`./scripts/validate.sh --all` against the **candidate** pin. Failure leaves the
+diff for inspection; it does not reset Git, weaken validation or publish it.
+Correct/review the diff and rerun the strict gate. Rerunning preparation is not
+a deployment retry, and its clean-checkout requirement rejects a leftover diff.
+
+### Apply and acceptance are separate operator decisions
+
+1. Inspect the candidate and validation output, update release-specific contracts
+   where required, and repeat validation. Commit/push only when separately
+   authorized. Neither a commit nor merge proves runtime deployment.
+2. Before any authorized runtime update, retain a recent verified **full**
+   off-server bundle and agree on a maintenance window and rollback plan. A
+   preparation-time backup may already be stale.
+3. Review the existing host's actual Compose definition, protected inputs, image,
+   selected `manager` profile and persistent mount. This repository has no
+   automatic apply/bootstrap command. A host-specific image pull/service
+   recreation must be separately reviewed and authorized; do not replace live
+   configuration or identity with a generic reference file.
+4. On failure, record the result and inspect actual image/service state and any
+   partial changes before reauthorizing a retry. Local pin equality is not
+   evidence that the host was updated.
+5. Verify image/profile, health, Chebi's identity, memory/history, applications,
+   approved jobs and separately authorized inference/Telegram behavior. Report
+   local validation, published pin, deployed image and working behavior separately.
+
+A failed update may already have migrated runtime databases. Do not blindly
+start an older image over newer state. Preserve newer state, then use the
+retained full bundle on a clean isolated target and follow
+[recovery and single-owner cutover](backup-restore.md) if rollback requires old
+state. Cancelled jobs stay cancelled. Keep the source and recovery evidence
+until the owner accepts the result.

@@ -128,12 +128,11 @@ done
 printf 'PASS bad transfers and archives fail without deleting previous good backups\n'
 
 : >"$command_log"
-HERMES_DEPLOY_HOST='' run_backup >"$fixture_root/terraform-host.out"
-grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" \
-  || fail "omitted host must resolve from local Terraform state"
-grep -q 'root@203.0.113.44' "$command_log" || fail "resolved host was not used"
+HERMES_DEPLOY_HOST='' run_backup >"$fixture_root/default-host.out"
+! grep -q '^terraform ' "$command_log" || fail "backup must not consult retired infrastructure state"
+grep -q 'root@hermes-minimal' "$command_log" || fail "SSH overrides without a host must use the default alias"
 [[ "$(archive_count)" == 2 ]] || fail "successive backups must remain distinct"
-printf 'PASS omitted host resolves from Terraform state\n'
+printf 'PASS omitted host uses the SSH alias with explicit user/key overrides\n'
 
 : >"$command_log"
 FAKE_SSH_MODE=full run_backup --full >"$fixture_root/full-success.out"

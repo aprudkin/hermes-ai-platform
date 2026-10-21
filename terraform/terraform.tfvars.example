@@ -1,7 +1,0 @@
-location            = "hel1"
-server_type         = "cpx22" # Re-check live category, availability, recommendation, and price before every real plan.
-ssh_public_key_path = "~/.ssh/luk.pub"
-hcloud_ssh_key_name = "Luk"
-
-# Required: use the exact operator network(s), not a global CIDR.
-ssh_source_cidrs = ["203.0.113.10/32"]

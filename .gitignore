@@ -1,12 +1,17 @@
-# Local credentials and generated configuration
+# Credentials and private configuration
 .env
-*.tfvars
-!*.tfvars.example
-*.auto.tfvars
-ansible/inventory.ini
+.env.*
+credentials/
+secrets/
+*.pem
+*.key
+id_ed25519*
+rclone.conf
+upload.conf
+recovery.conf
 .generated/
 
-# Private runtime state and recovery artifacts (never project source)
+# Private runtime state and recovery artifacts
 /backups/
 /backup/
 /data/
@@ -21,21 +26,9 @@ ansible/inventory.ini
 *.sqlite
 *.sqlite3
 
-# Terraform state and providers
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-crash.*.log
-*.tfplan
-
-# Ansible/Python runtime artifacts
-*.retry
-ansible/facts/
-.ansible/
+# Local execution/editor artifacts
 __pycache__/
-
-# Local editor and OS files
+.venv/
 .DS_Store
 .idea/
 .vscode/

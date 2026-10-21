@@ -30,17 +30,8 @@ resolve_deploy_host() {
     return
   fi
 
-  # A plain backup uses the controller's SSH alias. Retain Terraform lookup
-  # for callers that already supply deployment credentials but omit the host.
-  if [[ -z "${HERMES_DEPLOY_SSH_USER:-}" && -z "${HERMES_DEPLOY_SSH_PRIVATE_KEY:-}" ]]; then
-    HERMES_DEPLOY_HOST=hermes-minimal
-    return
-  fi
-
-  require_command terraform
-  HERMES_DEPLOY_HOST="$(terraform -chdir="$repo_root/terraform" output -raw server_ipv4)" \
-    || fail "failed to resolve HERMES_DEPLOY_HOST from Terraform state"
-  require_var HERMES_DEPLOY_HOST
+  # Existing installation only: use the operator's alias unless explicitly set.
+  HERMES_DEPLOY_HOST=hermes-minimal
 }
 
 main() {

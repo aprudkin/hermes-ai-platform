@@ -10,17 +10,6 @@ fail() {
   exit 1
 }
 
-require_var() {
-  local name="$1"
-  [[ -n "${!name:-}" ]] || fail "${name} must be set"
-}
-
-require_file() {
-  local name="$1"
-  require_var "$name"
-  [[ -f "${!name}" ]] || fail "${name} must name an existing regular file"
-}
-
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
@@ -29,17 +18,12 @@ resolve_deploy_host() {
     return
   fi
 
-  require_command terraform
-  HERMES_DEPLOY_HOST="$(terraform -chdir="$repo_root/terraform" output -raw server_ipv4)" \
-    || fail "failed to resolve HERMES_DEPLOY_HOST from Terraform state"
-  require_var HERMES_DEPLOY_HOST
+  HERMES_DEPLOY_HOST=hermes-minimal
 }
 
 
 backup_runtime_data() {
-  # Retain explicit target credentials for the pre-upgrade recovery capture.
-  require_var HERMES_DEPLOY_SSH_USER
-  require_file HERMES_DEPLOY_SSH_PRIVATE_KEY
+  # The SSH alias supplies credentials; explicit overrides are validated by capture.
   HERMES_DEPLOY_HOST="$HERMES_DEPLOY_HOST" "$repo_root/scripts/hermes_backup.sh" --full
 }
 
@@ -120,7 +104,7 @@ for relative_path in required_contracts:
 checks = review.get("checks")
 if not isinstance(checks, list) or not any(
     isinstance(check, dict)
-    and check.get("command") == "./installer/install.sh validate"
+    and check.get("command") == "./scripts/validate.sh --all"
     and check.get("result") == "passed"
     for check in checks
 ):
@@ -174,7 +158,7 @@ main() {
   current_tag="$(read_pinned_tag)"
   latest_tag="$(read_latest_tag)"
   if [[ "$current_tag" == "$latest_tag" ]]; then
-    fail "local pin already matches $current_tag; live deployment is UNKNOWN, not a successful update. For deploy/retry use the explicit existing-host workflow in docs/operations.md"
+    fail "local pin already matches $current_tag; live deployment is UNKNOWN, not a successful update. For deploy/retry use the explicit maintenance workflow in docs/operations.md"
   fi
 
   verify_compatibility_review "$latest_tag"
@@ -182,7 +166,7 @@ main() {
   update_image_pin "$current_tag" "$latest_tag"
   # Validate the candidate, not merely the old pin attested in the review.
   # On failure leave the diff for inspection; a retry fails the clean-tree gate.
-  "$repo_root/installer/install.sh" validate
+  "$repo_root/scripts/validate.sh" --all
   printf 'Prepared and locally validated pin %s. NOT committed, pushed or deployed.\n' "$latest_tag"
   printf 'Review the diff, publish separately, then authorize an explicit deployment; see docs/operations.md.\n'
 }
