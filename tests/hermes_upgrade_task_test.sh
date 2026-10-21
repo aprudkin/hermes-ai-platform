@@ -9,7 +9,7 @@ fixture_repo="$fixture_root/repo"
 command_log="$fixture_root/commands.log"
 review_file="$fixture_root/review.json"
 mkdir -p "$fake_bin" "$fixture_repo/"{scripts,docker,docs,installer}
-cp "$repo_root/scripts/"hermes_{upgrade.sh,backup.sh,backup_bundle.py} "$fixture_repo/scripts/"
+cp "$repo_root/scripts/"hermes_{upgrade.sh,backup.sh,backup_bundle.py,backup_progress.py} "$fixture_repo/scripts/"
 cp "$repo_root/docs/"{backup-restore.md,operations.md} "$fixture_repo/docs/"
 cp "$repo_root/README.md" "$fixture_repo/"
 printf 'image: nousresearch/hermes-agent:v1\n' >"$fixture_repo/docker/docker-compose.yml"
