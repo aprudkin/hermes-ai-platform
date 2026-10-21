@@ -24,6 +24,15 @@ tasks:
     cmds:
       - ./scripts/hermes_backup.sh --full
 
+  backup:hermes:cloud:
+    desc: Upload an existing full bundle through Mail.ru crypt and verify its recovery-config download
+    summary: |
+      Requires HERMES_BACKUP_FILE and explicit HERMES_CONFIRM_CLOUD_UPLOAD=1.
+      Uses the separate protected Hermes rclone configs; see docs/cloud-backup.md.
+      No new server capture, restore, deletion, schedule or global launcher changes.
+    cmds:
+      - python3 scripts/hermes_cloud_backup.py
+
   verify:hermes:
     desc: Verify HERMES_BACKUP_FILE locally; no restore or server access
     cmds:

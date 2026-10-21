@@ -60,7 +60,10 @@ The repository already provides:
   and retained dependencies for a planned migration.
 
 Both current bundle formats contain secrets and are **not encrypted by the
-existing scripts**. Protect transfers and storage; do not describe them as
+capture scripts**. A separate [Mail.ru cloud Task](cloud-backup.md) encrypts an
+existing full archive's remote copy through the approved crypt configuration,
+then verifies a recovery-config download; it does not encrypt the local archive.
+Protect transfers and storage; do not describe them as
 encrypted or upload them to a new recipient without a real implementation and
 an authorized destination. Local validation, checksums and an existing tar file
 are not proof of a successful live restore.

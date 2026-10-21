@@ -304,7 +304,29 @@ def interrupted(signum, frame):
     raise BundleError("capture interrupted or timed out")
 
 
+def stage_reporter(location):
+    """Only fixed stage labels/timings, never runtime paths or command output."""
+    started = previous = time.monotonic()
+
+    def report(label):
+        nonlocal previous
+        now = time.monotonic()
+        def duration(value):
+            seconds = max(0, int(value))
+            return f"{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
+        try:
+            print(f"[{location} elapsed {duration(now - started)} | previous stage {duration(now - previous)}] {label}",
+                  file=sys.stderr, flush=True)
+        except OSError:
+            # Display failure must never interrupt an owned pause/unpause sequence.
+            pass
+        previous = now
+    return report
+
+
 def capture(root_arg, name, scope="full"):
+    progress = stage_reporter("source")
+    progress("Checking runtime, capture lock and available space")
     require(scope in ("personal", "full"), "unsupported backup scope")
     personal = scope == "personal"
     payloads = PERSONAL_PAYLOADS if personal else PAYLOADS
@@ -344,18 +366,21 @@ def capture(root_arg, name, scope="full"):
             (stage / "RESTORE.md").write_text(RESTORE_GUIDE, encoding="utf-8")
             (stage / "verify.py").write_text(BUNDLE_SOURCE, encoding="utf-8")
             if not personal:
+                progress("Saving Docker image on source (container not paused by this capture)")
                 run(["docker", "image", "save", "--output", str(stage / "image.tar"), image_id], timeout=900)
             owned_pause = False
             try:
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Running")
                         and not current["State"].get("Paused"), "container changed before pause")
+                progress("Pausing source for the state snapshot")
                 # Set intent first: Docker can pause successfully then report an error.
                 owned_pause = True
                 run(["docker", "pause", container_id])
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during pause")
+                progress("Snapshotting state on source (pause confirmed)")
                 diff = layer_diff(container_id)
                 if personal:
                     personal_snapshot(root, stage)
@@ -365,6 +390,7 @@ def capture(root_arg, name, scope="full"):
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Paused")
                         and current["State"].get("Running"), "container changed during snapshot")
+                progress("Unpausing source after snapshot")
                 run(["docker", "unpause", container_id])
                 current = inspect("container", name)
                 require(current.get("Id") == container_id and current.get("State", {}).get("Running")
@@ -382,6 +408,7 @@ def capture(root_arg, name, scope="full"):
                     finally:
                         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
                             signal.signal(signum, interrupted)
+            progress("Source unpause confirmed; hashing snapshot and image payloads")
             signal.alarm(5400)
             manifest = {"format": PERSONAL_FORMAT if personal else FORMAT, "version": 1,
                         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -397,11 +424,13 @@ def capture(root_arg, name, scope="full"):
             write_json(stage / "manifest.json", manifest)
             # Stream after unpause: do not duplicate the archive or verification
             # payloads on the server. The controller verifies before publication.
+            progress("Compressing and transmitting archive; source is no longer paused by this capture")
             try:
                 with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz") as archive:
                     for name in ["manifest.json"] + sorted(payloads):
                         archive.add(stage / name, arcname=name, recursive=False)
                 sys.stdout.buffer.flush()
+                progress("Archive stream sent; controller integrity verification still required")
             finally:
                 signal.alarm(0)
 
@@ -609,7 +638,9 @@ def validate_image(path, expected):
         zero_tail(archive.fileobj)
 
 
-def verify(bundle, scope=None):
+def verify(bundle, scope=None, progress=None):
+    progress = progress or (lambda label: None)
+    progress("Decompressing archive and checking payload hashes")
     require(scope in (None, "personal", "full"), "unsupported backup scope")
     # A private staging copy bounds memory regardless of state/image size. It
     # writes opaque tar bytes only, never extracts caller-controlled filenames.
@@ -680,8 +711,10 @@ def verify(bundle, scope=None):
                                                                    personal=personal), "restore configuration mismatch")
         require((stage / "RESTORE.md").stat().st_size > 0 and (stage / "verify.py").stat().st_size > 0,
                 "empty recovery instructions or verifier")
+        progress("Checking state archive structure and recovery metadata")
         validate_state(stage / "state.tar", source["profile"], personal=personal)
         if not personal:
+            progress("Checking saved Docker image identity and layer hashes")
             validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
     return manifest
 
@@ -737,14 +770,15 @@ def main():
         elif len(args) == 3 and args[0] == "restore-state":
             restore_state(Path(args[1]), Path(args[2]))
             print("Archive verified; state extracted and compared. Runtime NOT started or verified.")
-        elif len(args) in (2, 3) and args[0] == "verify":
-            manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None)
+        elif len(args) in (2, 3) and args[0] in ("verify", "verify-progress"):
+            progress = stage_reporter("verification") if args[0] == "verify-progress" else None
+            manifest = verify(Path(args[1]), args[2] if len(args) == 3 else None, progress=progress)
             if manifest["format"] == PERSONAL_FORMAT:
                 print("Personal bundle integrity and retained state verified; reinstall/restore not tested.")
             else:
                 print("Recovery bundle integrity and structure verified; restore not tested.")
         else:
-            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
+            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full] | verify-progress BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
         return 0
     except BundleError as error:
         # BundleError messages are fixed developer strings, never runtime data.

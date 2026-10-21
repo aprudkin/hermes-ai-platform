@@ -19,6 +19,20 @@ Run from this repository on the controller, after authorizing a live backup:
 task backup:hermes
 ```
 
+The command prints total elapsed time (`HH:MM:SS`) while waiting for the source,
+then received MiB and the recent transfer rate every five seconds. During local
+verification it reports total elapsed time and time spent verifying. The final
+verified message includes total duration. No percentage or ETA is shown because
+the compressed archive size is unknown until the stream ends. The source also reports actual stage transitions: runtime/space checks, image
+export, pause, state snapshot, unpause confirmation, hashing, then compression
+and transfer. Each source message includes source elapsed time and the duration
+of the preceding stage. Local verification identifies decompression/hashing,
+state checks and image-layer checks. Before the first source message, only
+connection/startup is known; a heartbeat alone does not prove server progress.
+Stage messages come from the generated capture program, so an already running
+backup cannot acquire newly added messages; they apply to the next invocation.
+Progress is not successful verification or current source health.
+
 This task calls `./scripts/hermes_backup.sh --full`. Its `b:hermes` and
 `hermes:backup` aliases, and the explicit `backup:hermes:full` task, all create
 full bundles. With the owner's existing global catalog, use `task -g b:hermes`
@@ -47,6 +61,8 @@ without an interactive privilege prompt. The wrapper does not invoke `sudo`.
 The result is `hermes-recovery-<UTC timestamp>-<process id>.tar.gz`, mode `0600`.
 Only a completed and verified transfer receives that final name. Existing
 backups are retained; there is no schedule, retention policy or automatic upload.
+An existing full archive can be sent separately using the explicitly authorized
+[Mail.ru crypt upload/readback Task](cloud-backup.md); capture never invokes it.
 Legacy `hermes-data-*.tar.gz` files remain data-only archives but do not satisfy
 the recovery-bundle verifier or `restore-state` contract. Preserve them; manually
 inspect/migrate them separately rather than bypassing the current verifier.

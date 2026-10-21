@@ -39,6 +39,14 @@ either user or key **without a host** retains the `server_ipv4` lookup from
 local Terraform state. Set the host explicitly when overriding credentials
 for an alias. Empty values are treated as unset. No Terraform apply is run.
 
+Progress reports total elapsed time, received MiB and recent transfer rate every
+five seconds, followed by a timed local-verification phase. Final success includes
+total duration. No percentage/ETA is inferred from an unknown compressed size;
+source-side stage messages identify checks, pause/snapshot/unpause, hashing and
+compression/transfer, with elapsed and preceding-stage duration. Personal mode
+has no image-export stage. Local verification reports decompression and state
+checks. Progress output is not proof of integrity or current source health.
+
 The server account needs permission to read the state, stage a snapshot beneath
 `/opt/hermes`, and use Docker without an interactive prompt; the wrapper does
 not invoke `sudo`. The controller needs Python 3; the server needs Python 3,
@@ -68,7 +76,10 @@ on the controller, or a separately authorized remote storage service. For a
 mounted volume, point `HERMES_BACKUP_DIR` at a private directory on it. For remote
 storage, transfer only over authenticated encrypted transport and only after its
 access controls and encryption-at-rest/key-recovery arrangement are selected.
-No provider/account/key is assumed. Re-download/read the stored copy and run the
+No provider/account/key is assumed by capture. For an already configured Mail.ru
+crypt destination, the separate [cloud Task](cloud-backup.md) uploads only an
+existing **full** bundle and verifies its recovery-config download; it does not
+accept personal bundles or run a new capture. Re-download/read the stored copy and run the
 verifier again; a successful upload alone is not verification. Keep at least one
 previous accepted copy until a replacement has passed verification and a restore
 rehearsal; these scripts do not delete old copies or schedule retention.

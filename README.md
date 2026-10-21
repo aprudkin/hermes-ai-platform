@@ -37,6 +37,7 @@ protected storage and space requirements **before** running a capture.
 | `task backup:hermes` | Capture full state, retained dependencies and exact image to this computer; briefly pauses the live container; verifies the received archive |
 | `task backup:hermes:full` | Explicit equivalent of the full default |
 | `task backup:hermes:personal` | Lighter personal-state backup without the image or recognized dependencies/caches |
+| `task backup:hermes:cloud` | Explicitly upload an existing full archive through Mail.ru crypt and verify a recovery-config download; [setup and authorization](docs/cloud-backup.md) |
 | `task verify:hermes` | Locally verify the trusted archive named by `HERMES_BACKUP_FILE`; no server access |
 | `task restore:hermes:state` | Restore and compare files into a **new** `HERMES_RESTORE_DIR` on compatible Linux; requires `HERMES_BACKUP_FILE`; never starts Hermes |
 | `task update:hermes` | Back up, review and validate a candidate image pin **only**; no commit/push/deployment |
@@ -59,10 +60,12 @@ and returns a non-success result with explicit retry guidance.
 an operator-configured `hermes-minimal` SSH alias. `HERMES_BACKUP_DIR` chooses
 where the controller saves archives (legacy default: `~/backup/hermer`). Choose
 a private directory on the owner's encrypted disk or an approved encrypted
-external volume; no disk encryption, cloud account or upload is provisioned.
+external volume; no disk encryption or cloud account is provisioned. Cloud upload
+is a separate explicit [Task](docs/cloud-backup.md), never part of capture.
 A controller **on the same server** is not an independent backup.
 
-The `.tar.gz` archives contain secrets and **are not encrypted by these tools**.
+The captured local `.tar.gz` archives contain secrets and **are not encrypted**.
+The separate cloud Task encrypts only the remote copy through the existing crypt setup.
 Mode `0600` is access control, not encryption. Keep credentials for the backup
 storage and recovery instructions available independently of the old server.
 See [independent storage](docs/personal-backup.md#independent-storage-and-recovery-kit).

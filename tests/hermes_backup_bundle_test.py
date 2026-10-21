@@ -157,6 +157,32 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
         path.write_bytes(result.stdout)
         return path
 
+    def test_capture_reports_real_stages_in_order_without_archive_contamination(self):
+        result = self.capture()
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        stages = [b"Checking runtime", b"Saving Docker image", b"Pausing source",
+                  b"Snapshotting state", b"Unpausing source", b"Source unpause confirmed",
+                  b"Compressing and transmitting", b"Archive stream sent"]
+        positions = [result.stderr.index(stage) for stage in stages]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(b"previous stage", result.stderr)
+        path = self.base / "progress.tar.gz"
+        path.write_bytes(result.stdout)
+        checked = subprocess.run([sys.executable, str(HELPER), "verify-progress", str(path), "full"],
+                                 capture_output=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr.decode())
+        for stage in (b"Decompressing", b"Checking state archive", b"Checking saved Docker image"):
+            self.assertIn(stage, checked.stderr)
+        self.assertNotIn(b"secret-fixture", result.stderr + checked.stderr)
+        self.assertNotIn(b"secret-value", result.stderr + checked.stderr)
+
+    def test_unpause_failure_never_reports_hashing_or_transmission(self):
+        result = self.capture(fail="unpause")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"Source unpause confirmed", result.stderr)
+        self.assertNotIn(b"Compressing and transmitting", result.stderr)
+        self.assertEqual(result.stdout, b"")
+
     def verify(self, path, helper=HELPER, scope=None):
         args = [sys.executable, str(helper), "verify", str(path)]
         if scope is not None:
