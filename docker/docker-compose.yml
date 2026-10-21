@@ -7,7 +7,7 @@ services:
     init: false
     restart: unless-stopped
     network_mode: host
-    command: ["hermes", "-p", "${HERMES_GATEWAY_PROFILE:-default}", "gateway", "run"]
+    command: ["hermes", "-p", "${HERMES_GATEWAY_PROFILE:-manager}", "gateway", "run"]
     environment:
       HERMES_UID: "${HERMES_UID:-10000}"
       HERMES_GID: "${HERMES_GID:-10000}"

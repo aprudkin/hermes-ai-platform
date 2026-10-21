@@ -66,13 +66,13 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   trap 'rm -rf "$fixture_root"' EXIT
 
   docker compose --file "$compose_file" config --format json >"$fixture_root/default.json"
-  assert_rendered_compose default "$fixture_root/default.json"
-  printf 'PASS Compose default profile renders -p default gateway run\n'
+  assert_rendered_compose manager "$fixture_root/default.json"
+  printf 'PASS Compose defaults to the active manager identity\n'
 
-  HERMES_GATEWAY_PROFILE=manager \
+  HERMES_GATEWAY_PROFILE=default \
     docker compose --file "$compose_file" config --format json >"$fixture_root/manager.json"
-  assert_rendered_compose manager "$fixture_root/manager.json"
-  printf 'PASS Compose selected profile renders -p manager gateway run\n'
+  assert_rendered_compose default "$fixture_root/manager.json"
+  printf 'PASS explicit upstream default-profile override remains available\n'
 else
   printf 'SKIP actual Compose rendering (runnable docker compose unavailable)\n'
   python3 - "$compose_file" <<'PY'
@@ -82,7 +82,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as source:
     compose = source.read()
 
-expected = 'command: ["hermes", "-p", "${HERMES_GATEWAY_PROFILE:-default}", "gateway", "run"]'
+expected = 'command: ["hermes", "-p", "${HERMES_GATEWAY_PROFILE:-manager}", "gateway", "run"]'
 if expected not in compose:
     raise SystemExit("expected explicit gateway profile command in Compose source")
 

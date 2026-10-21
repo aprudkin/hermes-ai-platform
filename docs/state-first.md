@@ -1,9 +1,9 @@
 # Keep the running state; rebuild the packaging
 
-This installation is one long-lived Hermes environment, not a platform that
-needs continual infrastructure expansion. Terraform and Ansible remain useful
-recovery/bootstrap tools, but routine work should not require redeploying the
-server or replacing personal state with the original templates.
+This installation is one long-lived Hermes environment for Чеби (Chebi), using
+the `manager` profile. This repository maintains and recovers that environment;
+it does not provision servers or bootstrap a new installation. Routine work
+must not replace personal state with repository reference files.
 
 ## Which instructions are authoritative?
 
@@ -24,20 +24,20 @@ operator-approved Chebi identity. Keep identity revisions deliberate and
 reviewable. Do not commit credentials, user-memory files, conversation/session
 databases, accounting records or complete backup archives to Git.
 
-Ordinary Ansible deployment preserves an existing profile identity. A newly
-created profile receives its reviewed template even if upstream profile
-creation seeded a cloned/default identity. An existing profile with no identity
-file receives the template too. Deliberately replacing an existing identity
-requires the explicit Ansible variable `hermes_replace_profile_identities=true`;
-the copy module keeps a backup of replaced bytes. The default is `false`.
+The repository seed is not synchronized into the live profile automatically.
+Preserve the live identity during maintenance and recovery. A missing identity
+on a genuinely new profile may be initialized from the reviewed seed only as
+an explicit operator action, not as an implicit update step. Replacing a
+personalized identity requires owner approval and a private byte-exact copy of
+the previous file before writing; do not commit that private copy to Git.
 
-In preserve mode, verification checks that identity files exist and are
-nonempty regular files; it does not falsely require locally edited words to
-match a historical Git template. In explicit replacement mode, verification
-also requires the exact repository bytes, including trailing newlines. This is
-not a proof of the model's prompt or behavior: a live conversation can still
-contain an earlier prompt snapshot. Do not reset sessions or restart a gateway
-just to make a file comparison look successful.
+Before accepting recovery, check that Chebi's restored identity is a nonempty
+regular file and matches the intended saved identity, not necessarily the Git
+seed. For an explicitly approved seed replacement, compare exact bytes,
+including trailing newlines. A file comparison is not proof of the model's
+prompt or behavior: a live conversation can still contain an earlier prompt
+snapshot. Do not reset sessions or restart a gateway just to make a comparison
+look successful.
 
 The repository cannot override the framework's or provider's higher-priority
 instructions. Project files such as `AGENTS.md` govern work in the repository;
@@ -74,9 +74,12 @@ from a command inside the container being paused: freezing the initiator can
 stall the capture. The SSH account must have the documented read/Docker
 permissions; the current wrapper does not automatically add sudo.
 
-No off-server schedule, encryption service, storage account or new cloud
-resource is provisioned by this documentation change. In particular, it does
-not re-enable any cancelled reports or mail monitoring. Before activating a
+The separate [host systemd workflow](server-backup.md) can capture and verify
+daily cloud backups after explicit installation, execution and timer-activation
+approval. It runs outside Hermes, not as a restored agent job. Repository
+contents alone do not establish an active schedule, independent key custody or
+working monitoring. No storage account or new cloud resource is provisioned,
+and no cancelled reports or mail monitoring are re-enabled. Before activating a
 restored snapshot, reconcile every scheduler against the owner's current
 approved job list; an older archive or template does not override cancellation.
 
@@ -86,8 +89,9 @@ approved job list; an older archive or template does not override cancellation.
    container, while the old server is still available.
 2. Keep an independent copy and the means to access/decrypt it available to the
    operator, not solely inside the old server.
-3. Prepare a clean compatible target. Restore using the bundle's guide rather
-   than running a full installer over the recovered state.
+3. Prepare a clean compatible Linux target with Docker and Compose already
+   installed. Restore using the bundle's guide; do not overwrite recovered state
+   with reference configuration or an unrelated setup process.
 4. Inspect restored files and dependencies offline first. Do not start a second
    live bot with restored credentials: Telegram polling, cron jobs and external
    writes must have only one active owner.

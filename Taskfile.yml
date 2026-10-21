@@ -1,6 +1,11 @@
 version: '3'
 
 tasks:
+  validate:
+    desc: Strict local checks for current maintenance and recovery tools
+    cmds:
+      - ./scripts/validate.sh --all
+
   backup:hermes:
     aliases: [b:hermes, hermes:backup]
     desc: Create and verify a full Hermes recovery bundle on this computer

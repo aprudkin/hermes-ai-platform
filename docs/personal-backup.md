@@ -19,8 +19,9 @@ task backup:hermes:personal
 `./scripts/hermes_backup.sh` CLI without flags also retains personal mode.
 
 The ordinary `task backup:hermes`, `task b:hermes` and `task hermes:backup`
-now create a **full** recovery bundle instead. The existing global launchers
-`t backup:hermes` / `t b:hermes` follow that full default. To run personal mode
+create a **full** recovery bundle. Where the owner's existing global launchers
+`t backup:hermes` / `t b:hermes` delegate to this checkout, they follow that full
+default; this repository does not install global launchers. To run personal mode
 from another directory without adding a global launcher:
 
 ```bash
@@ -30,14 +31,14 @@ task --dir "$HOME/dev/hermes-ai-platform" backup:hermes:personal
 With no deployment variables set, the wrapper connects to `hermes-minimal` and
 lets SSH read its user and identity from the controller's `~/.ssh/config`.
 Configure that alias for the intended Hermes server before running the task.
-No Terraform lookup is needed for this default.
+No infrastructure-state lookup is performed.
 
 To override the connection, set `HERMES_DEPLOY_HOST` to an SSH alias or address.
 `HERMES_DEPLOY_SSH_USER` and `HERMES_DEPLOY_SSH_PRIVATE_KEY` are optional overrides;
-a supplied key must be an existing regular file. For compatibility, supplying
-either user or key **without a host** retains the `server_ipv4` lookup from
-local Terraform state. Set the host explicitly when overriding credentials
-for an alias. Empty values are treated as unset. No Terraform apply is run.
+a supplied key must be an existing regular file. When only user/key is supplied,
+the host still defaults to `hermes-minimal`. Empty values are treated as unset.
+SSH uses `accept-new` on first use; confirm the intended host fingerprint
+separately before capture.
 
 Progress reports total elapsed time, received MiB and recent transfer rate every
 five seconds, followed by a timed local-verification phase. Final success includes
@@ -131,7 +132,8 @@ keep authoritative source/data outside those regeneration paths. Hardlinks to
 retained files still preserve their data when a cache-side link is omitted.
 
 The backup also excludes the image itself, unrelated host files, OS packages,
-controller SSH keys and Terraform state, and external service data/settings.
+controller SSH keys, host infrastructure records, and external service
+data/settings.
 Dependency versions or external downloads may no longer be available later;
 this backup does not guarantee offline reconstruction of the exact runtime.
 
@@ -211,8 +213,9 @@ keeps original recovery evidence available through acceptance.
 
 Preserve numeric ownership, ACLs and attributes on a compatible Linux
 filesystem; do not recursively assign everything to one UID. Attribute errors
-mean the restore is incomplete. Do not run the normal full installer over the
-restored state: it reconciles configuration rather than preserving it verbatim.
+mean the restore is incomplete. Do not overwrite restored state with the
+repository reference configuration or a new setup process: recovery preserves
+the saved state, not generic defaults.
 
 Rebuild excluded dependency environments using retained manifests/lockfiles
 and each application's installation instructions. Check custom applications
