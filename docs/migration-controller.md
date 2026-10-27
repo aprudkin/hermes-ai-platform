@@ -7,6 +7,17 @@ production notice, owner-key enrollment or timer activation was performed here.
 **Do not enable these units with a fixture adapter.** Missing admission evidence
 means no freeze, even at the agreed time.
 
+## Current continuity contract
+
+The owner accepts possible loss of **unprocessed Telegram inputs only** at the
+transition. The earlier absolute zero-loss legacy bootstrap gate is superseded,
+not proven solved. Preserve processed conversations, memory, files, settings,
+results and current cancellations. Started/uncertain external effects require
+preservation and reconciliation, never blind replay. See the explicit revised
+[admission contract and non-starting recovery stage](migration-continuity.md).
+All other production gates, state v3 and migration-site-v2 remain unchanged.
+This waiver is not approval to freeze or cut over; production remains NOFREEZE.
+
 ## Agreed time and authority
 
 The owner confirmed **2026-10-28 10:00 Europe/Moscow (07:00 UTC)** for phase 1:
@@ -136,7 +147,9 @@ stopped gateway cannot receive it. The earlier draft's SSH forced-command route
 was an implementer proposal, **not an agreed replacement**; do not enroll keys or
 present it as the owner's chosen channel. The low-level confirmation endpoint
 below remains for a future trusted bridge, not permission to manufacture approval.
-A reviewed single-receiver drain/durable-inbox/replay path is an admission blocker.
+A reviewed single-owner approval transport remains an admission blocker. The
+legacy zero-loss bootstrap proof is no longer mandatory under the revised
+contract; processed-state quiescence and uncertain-effect reconciliation still are.
 The following SSH enrollment description is an **unaccepted alternative only**.
 
 Install a dedicated owner-held key, not an agent-held administrator key, in a
@@ -181,13 +194,15 @@ receiver or live delivery proof; see [primitive status](migration-primitives.md)
 There is **no second getUpdates consumer**, webhook swap, offset advancement,
 `drop_pending_updates`, or imported-history confirmation introduced by this PR.
 **Do not assume Telegram backlog will survive source restart.** Read-only source
-inspection found that the installed adapter hardcodes cold-boot drop, lacks the
-new documented `drop_pending_on_cold_boot` knob, and holds acknowledged events in
+inspection found that the installed adapter hardcodes cold-boot drop, lacks a
+`drop_pending_on_cold_boot` knob, and holds acknowledged events in
 process memory. Offline execution of those exact installed method bodies (fake
 network only) confirmed cold boot requests drop and PTB shutdown acknowledges
 queued updates before processing. Live offsets/inflight counts are **unknown,
-not zero**. No safe drain/replay implementation is available in this PR, so no
-freeze is admitted. Details and source hashes: [ingress evidence](migration-primitives.md#telegram-input-preservation-blocker).
+not zero**. Loss of only unprocessed inputs is now accepted; this does not prove
+processed-state quiescence or owner approval transport. Those and the other
+production gates still prohibit freeze. Details and source hashes:
+[ingress evidence](migration-primitives.md#telegram-input-preservation-blocker).
 
 After target startup, the trusted dialogue adapter must establish all of:
 new instance/run/nonce, exact private owner and chat, post-start inbound user
@@ -240,7 +255,8 @@ The following remain **required before installation/activation**:
    old summaries of absent email jobs must not be used. Preserve each task's
    actual current enabled/disabled state, including current cancellations.
 3. Tested external controller/notice path and owner authentication in the original
-   Telegram chat through a proven single-receiver durable drain/replay path;
+   Telegram chat through a proven single-owner approval transport; processed-state
+   quiescence and reconciliation under [processed-state-v1](migration-continuity.md);
    verified watchdog/boot recovery and time synchronization. The unaccepted SSH
    alternative must not silently replace this gate. Establish a source-side fence
    against all restart/recreation paths that survives a host reboot.

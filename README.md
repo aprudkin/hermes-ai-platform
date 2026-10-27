@@ -55,7 +55,8 @@ does not install or modify that launcher.
 - [Full recovery and migration](docs/backup-restore.md)
 - [Move to another hosting provider](docs/migration.md) — including recovery without the old server
 - [Two-phase controller and owner Plan B](docs/migration-controller.md) — tested preparation, production adapter/activation still gated
-- [Cold capture and migration primitives](docs/migration-primitives.md) — real fixture capture/restore/sender tests; Telegram drain/replay still blocks freeze
+- [Cold capture and migration primitives](docs/migration-primitives.md) — real fixture capture/restore/sender tests; production admission still blocked
+- [Revised continuity and recovery stage](docs/migration-continuity.md) — accepted loss of unprocessed Telegram input only; processed state preserved, no blind replay
 - [Explicit encrypted cloud transfer](docs/cloud-backup.md)
 - [Daily host backup and retention](docs/server-backup.md)
 

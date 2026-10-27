@@ -3,8 +3,18 @@
 These additions close the **missing executable cold capture** gap in PR #49.
 They do not close the production migration admission gap. No source pause/stop,
 live capture, transfer, restore, message, schedule activation or target startup
-was performed. A complete `migration-site-v1` adapter is deliberately **not**
+was performed. A complete `migration-site-v2` adapter is deliberately **not**
 provided: composing incomplete proofs into `ready: true` would be unsafe.
+
+## Current contract (supersedes the original zero-loss blocker)
+
+The owner accepts possible loss of **unprocessed Telegram input only** during
+switching. Preserve processed conversations, memory, files, settings, results and
+current cancellations; quarantine uncertain external effects, never blind replay.
+The absolute G1 zero-loss legacy bootstrap proof is narrowly waived, not solved.
+Read the [revised admission contract and tested non-starting recovery stage](migration-continuity.md).
+All-writer quiescence, persistent fencing, independent custody, original-DM fresh
+approval and recovery remain required. No production readiness is claimed.
 
 ## Cold full bundle
 
@@ -128,9 +138,10 @@ locally inspected code, SHA256:
 Actual installed `plugins/platforms/telegram/adapter.py`:
 
 - `_start_polling_mode`, lines 2952–2954, passes
-  `drop_pending_updates=not is_reconnect`. It does **not** contain the newer
-  documented `drop_pending_on_cold_boot` knob. Setting an unsupported flag would
-  not establish queue preservation.
+  `drop_pending_updates=not is_reconnect`. It does **not** contain a
+  `drop_pending_on_cold_boot` knob. The later documentation audit did not find
+  that setting in the fetched official page either; the earlier claim about
+  latest docs was not substantiated. An unsupported flag proves nothing.
 - `_held_inbound_events` and text/photo batches are process-memory lists/maps.
   Comments explicitly note PTB has advanced the offset before this hold queue;
   Telegram will not redeliver those events. A filesystem snapshot excludes them.
@@ -147,9 +158,9 @@ No getUpdates call, webhook change, competing receiver or live message was made.
 
 Current authoritative docs:
 [Telegram cold boot and repeated updates](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram).
-Docs say in-memory duplicate suppression is not a durable replay ledger and that
-polling acknowledgement is independent of agent completion. The new cold-boot
-setting in latest docs does not prove availability in this installed revision.
+A documentation setting or a newer upstream version would not prove behavior
+of this installed revision. The exact installed probes, not an assumed feature
+name, establish the observed ACK/cold-boot behavior.
 
 The live read-only DB schema distinguishes `messages.id` (local row ID) from
 `messages.platform_message_id` and contains session source/profile/user/chat/type.
@@ -162,14 +173,15 @@ confirmed Telegram delivery. A future trusted dialogue bridge must bind:
 3. reply to this run's challenge, real assistant turn and actual send receipt;
 4. original bounded acceptance window, current cancellations and replay decisions.
 
-**Still required before freeze:** an integration into the single existing receiver
-that journals raw admitted updates/offsets/inflight intent before acknowledgement,
-drains or durably records all handoffs/held batches, suppresses new ordinary work,
-and proves restart import/deduplication across every update kind and external
-side-effect uncertainty. A replacement receiver must own polling exclusively and
-have a tested import path for every unrelated update. Merely stopping polling,
-using inline callback buttons, changing cold-boot drop or writing an inbox file
-without a replay consumer does not solve it. No such integration is claimed here.
+**Superseded zero-loss requirement:** the earlier gate demanded a complete
+commit-before-ACK legacy export/replay path for every input. The owner has now
+accepted loss at the unprocessed-input boundary only. That historical guarantee
+is not claimed and is no longer an absolute prerequisite for this transition.
+What remains mandatory is processed-state quiescence, preservation/reconciliation
+of started or uncertain effects, single polling ownership and authenticated fresh
+owner approval. See [the exact revised admission obligations](migration-continuity.md).
+An inbox file alone does not provide an approval bridge or application replay.
+No such production integration is claimed here.
 
 ## Remaining production gates and timing
 

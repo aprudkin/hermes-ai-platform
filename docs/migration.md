@@ -139,7 +139,11 @@ Previously unreceipted cloud objects remain outside automatic retention.
 For the separately authorized two-phase workflow (freeze/verified readiness, then
 fresh owner approval before cutover), see [controller and owner Plan B](migration-controller.md).
 Its tested control kernel and dated unit templates do **not** establish an
-installed production adapter or permission to activate a migration.
+installed production adapter or permission to activate a migration. The owner
+accepts loss of unprocessed Telegram inputs only: see the explicit revised
+[continuity contract](migration-continuity.md). Already processed state and
+uncertain-effect evidence must survive; no automatic replay or cancelled-job
+reactivation. This acceptance does not replace fresh cutover approval.
 
 Follow [ownership switch and acceptance](backup-restore.md#switch-ownership-and-verify-behavior):
 
