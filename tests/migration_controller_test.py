@@ -26,7 +26,7 @@ class FixtureSite:
         self.calls.append(action)
         run = request["run_id"]
         if action == "preflight":
-            return {"run_id": run, "ready": True, "contract": "migration-site-v1"}
+            return {"run_id": run, "ready": True, "contract": "migration-site-v2"}
         if action == "source_probe":
             return {"run_id": run, "fenced": not self.source_running,
                     "running": self.source_running, "writers_stopped": not self.source_running}
@@ -77,7 +77,7 @@ class ControllerTest(unittest.TestCase):
             self.assertNotIn("restore", site.calls)
             self.assertFalse(site.target_running)
 
-    def approve(self, c, now=1000):
+    def approve(self, c, now: int | float | None = 1000):
         s = c.load()
         c.confirm({key: s[key] for key in
                    ("run_id", "nonce", "archive_digest", "notice_id")},
@@ -316,7 +316,8 @@ class ControllerTest(unittest.TestCase):
                 def recover(action, request):
                     if action in ("target_fence", "target_probe"):
                         return {"run_id": request["run_id"], "running": False,
-                                "fenced": True, "writers_stopped": True}
+                                "fenced": True, "writers_stopped": True,
+                                "no_target_activity_verified": True}
                     if action == "source_recover":
                         site.source_running = True
                         return {"run_id": request["run_id"], "running": True,
@@ -446,7 +447,7 @@ class ControllerTest(unittest.TestCase):
             site = FixtureSite()
             for _ in range(4):
                 c.advance(site)
-            self.approve(c, now=time.time())
+            self.approve(c, now=None)
             c.advance(site)
             original = site.call
             def start_now(action, request):

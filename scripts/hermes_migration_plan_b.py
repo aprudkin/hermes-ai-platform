@@ -60,11 +60,12 @@ def ssh_args(args, alias, command):
 
 def remote_status(text):
     value = json.loads(text)
-    phases = {"PREPARED", "FENCING_SOURCE", "CAPTURING", "RESTORING", "STARTING_TARGET",
-              "WAITING", "FENCING_TARGET", "PRESERVING_DELTA", "RECONCILING",
-              "RESUMING_SOURCE", "ACCEPTED", "CANCELLED", "ROLLED_BACK",
-              "NOTIFYING_READY", "AWAITING_CONFIRM", "RECOVERING_SOURCE", "ABORTED", "BLOCKED"}
-    if not isinstance(value, dict) or value.get("phase") not in phases:
+    phases = {"FENCING_TARGET", "PRESERVING_DELTA", "RECONCILING", "RESUMING_SOURCE",
+              "ROLLED_BACK", "RECOVERING_SOURCE", "ABORTED"}
+    if (not isinstance(value, dict) or value.get("version") != 3
+            or value.get("phase") not in phases
+            or not isinstance(value.get("run_id"), str)
+            or not re.fullmatch(r"[0-9a-f]{32}", value["run_id"])):
         raise Refused("invalid controller status")
     return {"phase": value["phase"], "run_id": value.get("run_id")}
 

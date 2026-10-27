@@ -55,7 +55,7 @@ class PlanBTest(unittest.TestCase):
         calls = []
         def runner(args):
             calls.append(args)
-            return '{"phase":"FENCING_TARGET","run_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+            return '{"version":3,"phase":"FENCING_TARGET","run_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
         base = ["--source", "source-alias", "--target", "target-alias", "--rollback", "--run-id", "a" * 32]
         with self.assertRaises(module.Refused):
             module.run(base, runner=runner)
@@ -75,6 +75,22 @@ class PlanBTest(unittest.TestCase):
                         "--confirm-request"], runner=lambda args: (calls.append(args) or
                         '{"phase":"FENCING_TARGET","run_id":"fixture"}'))
         self.assertEqual(calls, [])
+
+    def test_rollback_rejects_nonrollback_or_malformed_receipts(self):
+        import json
+        module = self.module()
+        base = ["--source", "source-alias", "--target", "target-alias", "--rollback",
+                "--confirm-request", "--run-id", "a" * 32]
+        good = {"version": 3, "phase": "FENCING_TARGET", "run_id": "a" * 32}
+        for changes in ({"phase": "ACCEPTED"}, {"phase": "PREPARED"},
+                        {"phase": "CANCELLED"}, {"phase": "UNKNOWN_PHASE"},
+                        {"version": 2}, {"version": None}, {"run_id": None}):
+            for bad_at in (0, 1):
+                with self.subTest(changes=changes, bad_at=bad_at):
+                    replies = [dict(good), dict(good)]
+                    replies[bad_at].update(changes)
+                    with self.assertRaises(module.Refused):
+                        module.run(base, runner=lambda args: json.dumps(replies.pop(0)))
 
     def test_controller_cli_refuses_mutation_without_execute(self):
         command = ROOT / "scripts/hermes_migration_controller.py"

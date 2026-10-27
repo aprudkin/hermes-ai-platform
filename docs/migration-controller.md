@@ -42,11 +42,16 @@ backup patch.
 `CommandSite` actually invokes the pinned executable with an action argument and
 JSON request on stdin; requires one JSON object response, suppresses raw stderr,
 uses an allowlisted environment, and kills the local process group on timeout.
+Timeout cleanup does not drain inherited stdout and has only a 0.2-second bounded
+direct-child reap; a detached pipe holder cannot keep the controller lock held.
 A local timeout does NOT stop an already detached remote operation. The site
 adapter must revoke/verify remote operations before authorizing recovery.
 Long capture/transfer work must be a durable **host operation** queried in bounded
 calls (default 60 seconds); never a detached SSH shell with no receipt/lease.
 No controller files or credentials belong inside the source Hermes mount.
+Test code/validators must also come from a trusted checkout outside restored
+state, not from the imported agent workspace. The tests here use private disposable
+fixture data, never a production restored profile as executable test authority.
 
 ## State machine and bounded recovery
 
@@ -73,11 +78,39 @@ watcher reaches the same deadline on its next iteration. No timer reset on retry
 Target startup intent is persisted **before** calling its adapter, so an interrupted
 start is treated as possibly live and must preserve target delta during fallback.
 
-After possible target startup, rollback is:
+Both budgets now retain wall/`CLOCK_BOOTTIME`/Linux boot-ID anchors in private
+state. Elapsed time includes suspend and survives controller-process restart on
+the same boot. Expiry of either bound, a different boot, absent clock evidence,
+or wall/elapsed divergence greater than 5 seconds conservatively requests target
+fencing; it never grants a new window. This policy can deliberately abort early
+after a forward clock step. Clock uncertainty refuses a new approval. It does
+not automatically resume source or prove clock correctness on remote hosts.
+Blocking boundaries before/after target start and dialogue are rechecked; a late
+or uncertain startup cannot enter normal `WAITING`, nor can a late dialogue RPC
+accept the run. Remote authorization expiry remains an adapter obligation below.
+
+The dated first-freeze window is persisted with admission, separately from the
+longer preparation budget. Before its first `source_fence` call the controller
+persists intent. On late recovery with **no** intent it becomes `BLOCKED` without
+freezing; with intent (including a crash before the effect or after completion)
+it requests conservative fencing/recovery instead of retrying a possibly late
+first freeze. Keep receipts and the original window; never recreate state to
+extend it. A `BLOCKED` notice still needs the scheduled entry's delivery retry or
+an independent operator; terminal state alone does not prove notification.
+
+After possible target activity, even **without local startup intent**, rollback is:
 
 ```text
 FENCING_TARGET -> PRESERVING_DELTA -> RECONCILING -> RESUMING_SOURCE -> ROLLED_BACK
 ```
+
+Only fresh, durable adapter proof `no_target_activity_verified: true`, covering
+the entire run and all target writers/recreation paths, permits the shorter
+`RECOVERING_SOURCE -> ABORTED` path when there was no start intent. Stopped/absent
+Docker state alone is not that proof. The proof is checked again before recovery;
+missing/revoked proof returns to delta preservation. Delta receipts require exact
+lowercase 64-hex SHA256 plus both verification flags. Missing/null/malformed
+digests cause retryable refusal, not an unhandled missing-key exit.
 
 Target unreachable or stop failure is **not** a fence. Do not start source without
 independently verified persistent target fencing (including provider-console fence
@@ -91,7 +124,10 @@ through host/SSH/provider failure. An independent operator must monitor that cas
 means **disarm, leave hosts as-is**, not resume; use `request-rollback` for recovery.
 A cancelled frozen run requires manual review, not deleting the state file. Exact
 confirmation retry is idempotent; wrong run/user/chat/notice/nonce is refused.
-State version 1 from the former one-phase draft is rejected, not auto-upgraded.
+State version **3** is required; versions 1/2 and unknown phases are rejected by
+all load paths, including manual rollback, without rewriting state. Do not convert
+old active state by editing its version: operator recovery must retain original
+receipts and determine actual host ownership. No deployed state was upgraded here.
 
 ## Owner route while ALL ordinary inputs are stopped
 
@@ -168,9 +204,20 @@ receipt or safely reconcile uncertainty. Probe responses must be fresh, not
 cached success. Root-owned private ancestors, immutable pinned code/dependencies,
 one deployment state directory and one site-wide migration lease are prerequisites.
 
+Contract **`migration-site-v2`** replaces v1; old adapters cannot pass preflight.
+Forward side-effect requests carry immutable `effect_expires_at` (preparation
+deadline, or the earlier dated first-freeze deadline). The adapter must enforce
+that authorization **at the remote effect**, not only at receipt of an RPC: use
+durable operation IDs, trusted clock/skew evidence and non-renewable bounded
+leases, refuse late new effects, and revoke outstanding work before recovery.
+An already completed operation may return its original durable receipt, never
+repeat the effect or extend its authorization. Controller boot-ID/elapsed values
+are not a clock shared with the target. A fixture claiming v2 is not proof of a
+real remote lease/fence. No production v2 adapter is bundled or installed.
+
 | Action | Required evidence/behavior |
 |---|---|
-| `preflight` | Read-only; `ready: true`, `contract: migration-site-v1` only after ALL gates below. An absent gate fails closed. No freeze in this action. |
+| `preflight` | Read-only; `ready: true`, `contract: migration-site-v2` only after ALL gates below, including remotely enforced effect expiry. An absent gate fails closed. No freeze in this action. |
 | `source_fence` / `source_probe` | Save original settings durably before change (`saved_states_digest`), drain/stop inputs and every writer, fence restart/recreation persistently; verify `fenced` and `writers_stopped`. |
 | `capture` | Final frozen **full gzip bundle**, exact compressed file SHA256, `archive_format: tar.gz`, full verifier success and independent-copy verification; source remains fenced throughout. |
 | `notify_ready` | Actual delivery receipt, exact run/nonce/owner/chat/archive digest and nonempty `notice_id`; no restore or target start. |
@@ -315,8 +362,11 @@ python3 hermes_migration_plan_b.py --rollback --confirm-request --run-id "$RUN_I
 ```
 
 This submits intent to the same external controller and reads that controller
-back. It does not itself claim rollback complete or start Docker directly. It
-requires the reviewed installed controller, scoped permissions and a running
+back. It does not itself start Docker directly. It validates version 3, exact run
+ID and a rollback/recovery phase on **both** replies; unknown phases, old schema,
+`PREPARED`, `ACCEPTED` or `CANCELLED` are not a successful rollback request.
+`completed: true` only reflects `ROLLED_BACK`/`ABORTED` readback.
+It requires the reviewed installed controller, scoped permissions and a running
 external watcher. Without those, this is **not yet an operational Plan B**.
 With controller/source unreachable: use verified provider console to fence target
 persistently, preserve its disks/delta, restore controller access and reconcile
