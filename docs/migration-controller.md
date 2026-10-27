@@ -34,8 +34,11 @@ review it before activation. A missed/unready start becomes terminal `BLOCKED`.
   synthetic hosts, real private filesystem state and subprocess execution.
 
 Production operations are supplied by a **reviewed, SHA256-pinned executable**
-`/usr/local/lib/hermes-migration/site-adapter`. None is bundled: no pretend-success
-backend, boolean config file, guessed freeze command or permissive backup patch.
+`/usr/local/lib/hermes-migration/site-adapter`. No complete site adapter is bundled.
+[Cold capture, source-host primitives and outbound sender](migration-primitives.md)
+are now executable and exercised on isolated fixtures, but deliberately cannot
+report production readiness. There is no pretend-success backend or permissive
+backup patch.
 `CommandSite` actually invokes the pinned executable with an action argument and
 JSON request on stdin; requires one JSON object response, suppresses raw stderr,
 uses an allowlisted environment, and kills the local process group on timeout.
@@ -92,12 +95,13 @@ State version 1 from the former one-phase draft is rejected, not auto-upgraded.
 
 ## Owner route while ALL ordinary inputs are stopped
 
-A fully stopped gateway cannot receive a Telegram approval. This implementation
-chooses a separate **owner-key-authenticated SSH forced command** for pre-cutover
-approval. This changes the proposed approval channel and requires owner agreement
-and a proven enrollment before freeze. It is not falsely presented as an incoming
-Telegram reply. The readiness and later dialogue still target the owner's original
-private Telegram DM, stored only in private deployment configuration.
+**The owner expects fresh approval in the original Telegram chat.** A fully
+stopped gateway cannot receive it. The earlier draft's SSH forced-command route
+was an implementer proposal, **not an agreed replacement**; do not enroll keys or
+present it as the owner's chosen channel. The low-level confirmation endpoint
+below remains for a future trusted bridge, not permission to manufacture approval.
+A reviewed single-receiver drain/durable-inbox/replay path is an admission blocker.
+The following SSH enrollment description is an **unaccepted alternative only**.
 
 Install a dedicated owner-held key, not an agent-held administrator key, in a
 restricted account. Its `authorized_keys` entry must use `restrict` plus a forced
@@ -132,17 +136,22 @@ code to the enrolled DM. Telegram bot tokens are not intrinsically send-only:
 protect the token, fixed endpoint/destination, no arbitrary method/URL, and keep
 it outside normal logs. Require a successful `sendMessage` API response with the
 exact destination and message ID; uncertain send receipts need reconciliation,
-not unlimited duplicate sends. This sender/receipt integration is **not yet
-implemented/rehearsed** by a production adapter.
+not unlimited duplicate sends. `scripts/hermes_migration_notice.py` now implements
+this outbound-only primitive with a fixed HTTPS host/method/private DM, local
+credential resolution and durable uncertain-send suppression. Real HTTP request/
+response tests use a loopback fixture, **not Telegram**. It has no confirmation
+receiver or live delivery proof; see [primitive status](migration-primitives.md).
 
 There is **no second getUpdates consumer**, webhook swap, offset advancement,
-`drop_pending_updates`, or imported-history confirmation. Unrelated Telegram
-updates stay at Telegram while polling is stopped (up to its documented 24-hour
-retention). Pre-fetched/in-flight updates require a proven drain/durable inbox
-before freeze; a filesystem snapshot does not prove they are preserved. If the
-owner insists on approving inside Telegram before cutover, stop admission until
-there is a separately reviewed single durable filtered receiver that journals
-all unrelated updates without dispatch/drop. Do not invent maintenance mode.
+`drop_pending_updates`, or imported-history confirmation introduced by this PR.
+**Do not assume Telegram backlog will survive source restart.** Read-only source
+inspection found that the installed adapter hardcodes cold-boot drop, lacks the
+new documented `drop_pending_on_cold_boot` knob, and holds acknowledged events in
+process memory. Offline execution of those exact installed method bodies (fake
+network only) confirmed cold boot requests drop and PTB shutdown acknowledges
+queued updates before processing. Live offsets/inflight counts are **unknown,
+not zero**. No safe drain/replay implementation is available in this PR, so no
+freeze is admitted. Details and source hashes: [ingress evidence](migration-primitives.md#telegram-input-preservation-blocker).
 
 After target startup, the trusted dialogue adapter must establish all of:
 new instance/run/nonce, exact private owner and chat, post-start inbound user
@@ -183,16 +192,19 @@ The following remain **required before installation/activation**:
    administration paths. The active inventory includes an AgentMail inbox check;
    old summaries of absent email jobs must not be used. Preserve each task's
    actual current enabled/disabled state, including current cancellations.
-3. Tested external controller/notice path and owner authentication enrollment,
-   agreement to the SSH approval route, verified watchdog/boot recovery and time
-   synchronization. Establish a source-side fence that survives a host reboot.
+3. Tested external controller/notice path and owner authentication in the original
+   Telegram chat through a proven single-receiver durable drain/replay path;
+   verified watchdog/boot recovery and time synchronization. The unaccepted SSH
+   alternative must not silently replace this gate. Establish a source-side fence
+   against all restart/recreation paths that survives a host reboot.
 4. Compatible frozen capture, unchanged admission/verifier guarantees and rollback
    of partial freeze. **The installed capture requires running/unpaused source,
    pauses only its own snapshot and unpauses before packaging. It cannot be
    called after a full container fence or blindly used as a zero-delta backup.**
-   Do not bypass its checks, fake running metadata or kill its cleanup. Implement
-   and rehearse a separately reviewed cold-capture path or a proven application
-   quiescence mechanism before production adapter admission can pass.
+   Do not bypass its checks, fake running metadata or kill its cleanup. The new
+   separate `capture-cold` path and host primitives have real fixture capture/
+   restore tests, but are not deployed and do not prove input quiescence, all-host
+   fencing, independent storage or production recovery. See [actual boundaries](migration-primitives.md).
 5. Enough private protected storage for archive, verification scratch, image import,
    restoration and independent delta. Verify exact image compatibility and restore
    rehearsal, cancellation/replay policy and independently retained cloud copy.

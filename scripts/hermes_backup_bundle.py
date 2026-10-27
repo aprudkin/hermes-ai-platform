@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Capture and structurally verify private Hermes personal or recovery bundles.
 
-No Docker or host mutations occur in verify/program. Capture pauses only its
-identified container, stores secrets privately, and unpauses before packaging.
+No Docker or host mutations occur in verify/program. Ordinary capture pauses its
+identified container and unpauses before packaging. Separate capture-cold accepts
+only a clean stopped/restart-disabled source and never resumes it.
 Structural verification is not proof that a restore or inference will succeed.
 """
 import datetime
@@ -82,6 +83,11 @@ def profile_for(container):
 def validate_container(container, root, name):
     require(container.get("Name") == "/" + name and container.get("State", {}).get("Running")
             and not container["State"].get("Paused"), "container must be running and initially unpaused")
+    return validate_runtime(container, root)
+
+
+def validate_runtime(container, root):
+    """Shared configuration admission; never fabricate running-state metadata."""
     require(HEX.fullmatch(container.get("Image", "")), "invalid image identity")
     mounts = container.get("Mounts", [])
     require(len(mounts) == 1, "unsupported mounts")
@@ -435,6 +441,95 @@ def capture(root_arg, name, scope="full"):
                 signal.alarm(0)
 
 
+def validate_cold_state(container):
+    """Docker stopped/restart-disabled evidence, NOT proof of all host writers."""
+    state = container.get("State", {})
+    require(container.get("Name") == "/hermes"
+            and state.get("Running") is False and state.get("Paused") is False
+            and state.get("Restarting") is False and state.get("Dead") is False
+            and type(state.get("Pid")) is int and state["Pid"] == 0
+            and state.get("Status") == "exited"
+            and type(state.get("ExitCode")) is int and state["ExitCode"] == 0
+            and not state.get("OOMKilled")
+            and container.get("HostConfig", {}).get("RestartPolicy") == {
+                "Name": "no", "MaximumRetryCount": 0},
+            "cold capture requires clean stopped container with restart disabled")
+
+
+def capture_cold(root_arg, name):
+    """Separately admitted full capture. Never pause, unpause, start or update Docker.
+
+    Caller must fence *all* other writers and preserve acknowledged input first.
+    A Docker stop alone is not migration readiness. This path leaves the source
+    stopped on every failure, including signal/output/verification failure.
+    """
+    require("RESTORE_GUIDE" in globals() and "BUNDLE_SOURCE" in globals(),
+            "capture requires the generated embedded program")
+    root = Path(root_arg)
+    require(root.is_absolute() and root == root.resolve() and root.is_dir(), "invalid runtime root")
+    require(name == "hermes", "unsupported container selection")
+    os.umask(0o077)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
+        signal.signal(signum, interrupted)
+    fd = os.open(root / ".hermes-backup.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+b") as lock:
+        require(stat.S_ISREG(os.fstat(lock.fileno()).st_mode), "invalid backup lock")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BundleError("another capture is active") from None
+        with tempfile.TemporaryDirectory(prefix=".hermes-cold-", dir=root) as tmp:
+            stage = Path(tmp)
+            container = inspect("container", name)
+            validate_cold_state(container)
+            profile = validate_runtime(container, root)
+            container_id, image_id = container["Id"], container["Image"]
+            require(re.fullmatch(r"[0-9a-f]{64}", container_id), "invalid container identity")
+            image = inspect("image", image_id)
+            require(image.get("Id") == image_id, "image inspection identity mismatch")
+            require_space(root, image)
+            diff = layer_diff(container_id)
+            tag = "hermes-recovery:" + image_id[7:]
+            write_json(stage / "container-inspect.json", container)
+            write_json(stage / "image-inspect.json", image)
+            write_json(stage / "compose.restore.json", restore_compose(container, root, tag))
+            (stage / "RESTORE.md").write_text(RESTORE_GUIDE, encoding="utf-8")
+            (stage / "verify.py").write_text(BUNDLE_SOURCE, encoding="utf-8")
+            signal.alarm(5400)
+            try:
+                run(["docker", "image", "save", "--output", str(stage / "image.tar"), image_id], timeout=900)
+                require(inspect("container", name) == container, "cold source changed before snapshot")
+                started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                run(["tar", "--numeric-owner", "--acls", "--xattrs", "-cf", str(stage / "state.tar"),
+                     "-C", str(root), "data", "app"], timeout=300, reject_diagnostics=True)
+                # Detect ordinary concurrent host-side writes; this is not a substitute
+                # for the caller's exclusive writer lease or application input drain.
+                run(["tar", "--compare", "--file", str(stage / "state.tar"), "--directory", str(root),
+                     "--numeric-owner"], timeout=300, reject_diagnostics=True)
+                require(inspect("container", name) == container and layer_diff(container_id) == diff,
+                        "cold source changed during snapshot")
+                finished = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                manifest = {"format": FORMAT, "version": 1,
+                            "created_at": finished,
+                            "capture": {"mode": "cold-stopped-v1", "snapshot_started_at": started,
+                                        "snapshot_finished_at": finished},
+                            "source": {"root": str(root), "container": name,
+                                       "container_id": container_id, "profile": profile},
+                            "image": {"id": image_id, "reference": container["Config"].get("Image"),
+                                      "repo_digests": image.get("RepoDigests") or [], "os": image.get("Os"),
+                                      "architecture": image.get("Architecture"), "restore_tag": tag},
+                            "layer_diff": diff,
+                            "payloads": {key: digest_file(stage / key) for key in sorted(PAYLOADS)}}
+                write_json(stage / "manifest.json", manifest)
+                with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz") as archive:
+                    for key in ["manifest.json"] + sorted(PAYLOADS):
+                        archive.add(stage / key, arcname=key, recursive=False)
+                require(inspect("container", name) == container, "cold source changed during packaging")
+                sys.stdout.buffer.flush()
+            finally:
+                signal.alarm(0)
+
+
 def safe_name(name):
     require(isinstance(name, str) and name and not name.startswith("/")
             and "\\" not in name and "\x00" not in name, "unsafe archive member path")
@@ -700,6 +795,17 @@ def verify(bundle, scope=None, progress=None):
                 and isinstance(image["repo_digests"], list) and image["os"] == "linux"
                 and isinstance(image["architecture"], str) and image["architecture"], "invalid image metadata")
         container, inspected_image = metadata["container-inspect.json"], metadata["image-inspect.json"]
+        if "capture" in manifest:
+            cold = manifest["capture"]
+            require(not personal and isinstance(cold, dict)
+                    and set(cold) == {"mode", "snapshot_started_at", "snapshot_finished_at"}
+                    and cold["mode"] == "cold-stopped-v1", "unsupported capture provenance")
+            started = datetime.datetime.fromisoformat(cold["snapshot_started_at"])
+            finished = datetime.datetime.fromisoformat(cold["snapshot_finished_at"])
+            require(started.tzinfo is not None and finished.tzinfo is not None
+                    and started <= finished <= datetime.datetime.fromisoformat(manifest["created_at"]),
+                    "invalid cold snapshot interval")
+            validate_cold_state(container)
         require(container.get("Image") == image["id"] and container.get("Id") == source["container_id"]
                 and container.get("Name") == "/hermes" and profile_for(container) == source["profile"]
                 and container["Config"].get("Image") == image["reference"], "container metadata mismatch")
@@ -767,6 +873,8 @@ def main():
             sys.stdout.write("RESTORE_GUIDE = " + repr(guide) + "\nBUNDLE_SOURCE = " + repr(source) + "\n" + source)
         elif len(args) in (3, 4) and args[0] == "capture":
             capture(args[1], args[2], args[3] if len(args) == 4 else "full")
+        elif len(args) == 3 and args[0] == "capture-cold":
+            capture_cold(args[1], args[2])
         elif len(args) == 3 and args[0] == "restore-state":
             restore_state(Path(args[1]), Path(args[2]))
             print("Archive verified; state extracted and compared. Runtime NOT started or verified.")
@@ -778,7 +886,7 @@ def main():
             else:
                 print("Recovery bundle integrity and structure verified; restore not tested.")
         else:
-            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | verify BUNDLE.tar.gz [personal|full] | verify-progress BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
+            raise BundleError("usage: helper program GUIDE | capture ROOT hermes [personal] | capture-cold ROOT hermes | verify BUNDLE.tar.gz [personal|full] | verify-progress BUNDLE.tar.gz [personal|full] | restore-state BUNDLE.tar.gz NEW_ABSOLUTE_DIRECTORY")
         return 0
     except BundleError as error:
         # BundleError messages are fixed developer strings, never runtime data.

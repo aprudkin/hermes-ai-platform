@@ -107,6 +107,19 @@ resuming operations. A killed host, lost Docker daemon or forced process kill
 can prevent cleanup; no shell or Python cleanup handler can guarantee recovery
 from those events.
 
+## Separately admitted cold capture (migration preparation)
+
+The generated program also supports `capture-cold ROOT hermes`, for a clean
+stopped container with Docker restart disabled. It never stops, pauses, unpauses
+or starts anything, and leaves the source stopped on every error. Ordinary task
+aliases do **not** select this mode; their admission and cleanup are unchanged.
+The cold path retains full payloads/runtime provenance/verifier checks and adds
+verified cold snapshot metadata. A Docker stop is not an input drain or all-host
+fence. See [executed primitive tests and remaining blockers](migration-primitives.md)
+before using it; no production cold capture or safe chat-confirmation path has
+been demonstrated. Existing installed capture programs are not updated by editing
+this repository, and a normal backup cannot be relabeled as the final freeze.
+
 ## Bundle contents and boundaries
 
 | File | Purpose |
