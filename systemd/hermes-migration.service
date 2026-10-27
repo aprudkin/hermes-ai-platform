@@ -1,0 +1,21 @@
+# Preparation artifact only. No production site adapter is bundled.
+[Unit]
+Description=External durable Chebi migration controller (two-phase owner gate)
+After=network-online.target time-sync.target docker.service
+Wants=network-online.target time-sync.target
+ConditionVirtualization=!container
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/hermes-migration/controller.env
+ExecStart=/usr/bin/python3 -I /usr/local/lib/hermes-migration/hermes_migration_controller.py scheduled --execute --state-dir /var/lib/hermes-migration/current --adapter /usr/local/lib/hermes-migration/site-adapter --adapter-sha256 ${MIGRATION_ADAPTER_SHA256} --start-at 1793170800 --latest-start 1793170860
+Restart=on-failure
+RestartSec=5s
+RestartPreventExitStatus=2
+KillMode=control-group
+TimeoutStopSec=90s
+StandardOutput=journal
+StandardError=journal

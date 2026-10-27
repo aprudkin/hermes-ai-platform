@@ -1,0 +1,14 @@
+# Preparation artifact only. Do not install/enable before independent review.
+[Unit]
+Description=One-time Chebi freeze/readiness admission, not cutover approval
+
+[Timer]
+OnCalendar=2026-10-28 10:00:00 Europe/Moscow
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+RemainAfterElapse=yes
+Unit=hermes-migration.service
+
+[Install]
+WantedBy=timers.target

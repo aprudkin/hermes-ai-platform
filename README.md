@@ -54,6 +54,7 @@ does not install or modify that launcher.
 - [Personal-state backup](docs/personal-backup.md)
 - [Full recovery and migration](docs/backup-restore.md)
 - [Move to another hosting provider](docs/migration.md) — including recovery without the old server
+- [Two-phase controller and owner Plan B](docs/migration-controller.md) — tested preparation, production adapter/activation still gated
 - [Explicit encrypted cloud transfer](docs/cloud-backup.md)
 - [Daily host backup and retention](docs/server-backup.md)
 

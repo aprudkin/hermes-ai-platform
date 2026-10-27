@@ -136,6 +136,11 @@ Previously unreceipted cloud objects remain outside automatic retention.
 
 ## 6. Cut over once, with a rollback point
 
+For the separately authorized two-phase workflow (freeze/verified readiness, then
+fresh owner approval before cutover), see [controller and owner Plan B](migration-controller.md).
+Its tested control kernel and dated unit templates do **not** establish an
+installed production adapter or permission to activate a migration.
+
 Follow [ownership switch and acceptance](backup-restore.md#switch-ownership-and-verify-behavior):
 
 1. Before the agreed switch, disable the old host's backup timer and let any

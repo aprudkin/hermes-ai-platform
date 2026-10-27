@@ -1,0 +1,24 @@
+# Preparation artifact only. Boot recovery cannot initiate a PREPARED run.
+[Unit]
+Description=Resume only an already-started Chebi migration after host reboot
+After=network-online.target time-sync.target docker.service
+Wants=network-online.target time-sync.target
+ConditionVirtualization=!container
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/hermes-migration/controller.env
+ExecStart=/usr/bin/python3 -I /usr/local/lib/hermes-migration/hermes_migration_controller.py resume --execute --state-dir /var/lib/hermes-migration/current --adapter /usr/local/lib/hermes-migration/site-adapter --adapter-sha256 ${MIGRATION_ADAPTER_SHA256}
+Restart=on-failure
+RestartSec=5s
+RestartPreventExitStatus=2
+KillMode=control-group
+TimeoutStopSec=90s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
