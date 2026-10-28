@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Source-host Docker primitives, NOT a production migration-site-v1 adapter.
+"""Source-host Docker primitives, NOT a production migration-site-v2 adapter.
 
-No preflight-ready, target start or source resume action exists. Docker fencing
-is not a durable input drain or a fence against systemd/Compose/admin recreation.
+No preflight-ready or target start action exists. Source recovery is in-process
+only, gated by a trusted current safety guard. Docker fencing is not an input
+drain or a fence against systemd/Compose/admin recreation.
 Run only from outside Hermes after independent authority and admission checks.
 """
 import argparse
@@ -90,7 +91,7 @@ class HostOperations:
                     and current == read_private(frozen), 'source changed since original fence')
         return current
 
-    def fence(self, run):
+    def fence(self, run, before_effect=None):
         require(isinstance(run, str) and re.fullmatch('[0-9a-f]{32}', run), 'invalid run')
         with locked(self.lock_path), locked(self.root / '.hermes-backup.lock'):
             if not self.anchor.exists():
@@ -109,9 +110,13 @@ class HostOperations:
             current = self.observe(record)
             require(not current['State'].get('Paused'), 'paused source requires independent recovery')
             if current['HostConfig']['RestartPolicy'] != {'Name': 'no', 'MaximumRetryCount': 0}:
+                if before_effect is not None:
+                    before_effect()
                 bundle.run(['docker', 'update', '--restart=no', current['Id']])
             current = self.observe(record)
             if current['State'].get('Running'):
+                if before_effect is not None:
+                    before_effect()
                 bundle.run(['docker', 'stop', '--time', '60', current['Id']], timeout=90)
             current = self.observe(record)
             bundle.validate_cold_state(current)
@@ -123,7 +128,7 @@ class HostOperations:
             return {'run_id': run, 'docker_fenced': True, 'all_writers_fenced': False,
                     'saved_states_digest': record['original_sha256']}
 
-    def capture(self, run):
+    def capture(self, run, before_effect=None):
         with locked(self.lock_path) as lease:
             record = self.record(run)
             require(not record['revoked'] and record['phase'] in ('FENCED', 'CAPTURED'),
@@ -144,6 +149,8 @@ class HostOperations:
             program = ('RESTORE_GUIDE = ' + repr(guide.read_text()) + '\nBUNDLE_SOURCE = '
                        + repr(source) + '\n' + source).encode()
             # O_EXCL: interrupted output is retained and cannot become a success.
+            if before_effect is not None:
+                before_effect()
             fd = os.open(pending, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, 'wb') as output:
                 child = subprocess.Popen([sys.executable, '-', 'capture-cold', str(self.root), 'hermes'],
@@ -172,6 +179,85 @@ class HostOperations:
             pending.unlink()
             atomic_json(receipt_path, receipt)  # also fsyncs directory containing final
             record['phase'] = 'CAPTURED'
+            atomic_json(self.path, record)
+            return receipt
+
+    def recover(self, run, guard):
+        """Restore this container only under a trusted, continuously held site fence.
+
+        The caller holds the site-wide recovery lease across this entire method.
+        guard() must freshly verify persistent target fencing, remote revocation,
+        no target activity and CURRENT cancellations/effect reconciliation. It is
+        trusted adapter code, never user JSON or a stored proof substituted for a
+        probe. This primitive cannot supply those production proofs itself.
+        """
+        with locked(self.lock_path), locked(self.root / '.hermes-backup.lock'):
+            record = self.record(run)
+            current = self.observe(record)
+            original = read_private(self.directory / 'original.json')
+
+            def check():
+                proof = guard()
+                require(isinstance(proof, dict) and proof.get('run_id') == run
+                        and all(proof.get(k) is True for k in (
+                            'target_fenced', 'persistent_fence', 'outstanding_operations_revoked',
+                            'no_target_activity_verified', 'safe_to_resume',
+                            'cancelled_jobs_preserved', 'replay_reviewed'))
+                        and isinstance(proof.get('reconciliation_digest'), str)
+                        and re.fullmatch('[0-9a-f]{64}', proof['reconciliation_digest']),
+                        'current recovery safety evidence missing')
+                return proof
+
+            check()
+            require(record['phase'] in ('FENCING', 'FENCED', 'CAPTURED', 'RECOVERING', 'RECOVERED'),
+                    'unsupported source recovery phase')
+            record['revoked'] = True
+            if record['phase'] not in ('RECOVERING', 'RECOVERED'):
+                record.update(phase='RECOVERING', recovery_step='ADMITTED',
+                              recovery_operation_id=run + ':source_recover')
+                atomic_json(self.path, record)
+            require(record.get('recovery_operation_id') == run + ':source_recover',
+                    'source recovery identity changed')
+            if record['phase'] == 'RECOVERED':
+                require(current['State'].get('Running') is True
+                        and current['HostConfig'] == original['HostConfig'], 'recovered source changed')
+                expected = dict(run_id=run, running=True, safe_to_resume=True,
+                                cancelled_jobs_preserved=True, replay_reviewed=True,
+                                saved_states_digest=record['original_sha256'],
+                                reconciliation_digest=record['recovery_evidence']['reconciliation_digest'])
+                require(read_private(self.directory / 'recovery.json') == expected,
+                        'source recovery receipt changed')
+            require(not current['State'].get('Paused') and not current['State'].get('Restarting')
+                    and not current['State'].get('Dead'), 'source state requires manual review')
+            if not current['State'].get('Running'):
+                require(record['recovery_step'] == 'ADMITTED',
+                        'uncertain source start; reconcile without replay')
+                proof = check()
+                record.update(recovery_step='START_INTENT', recovery_evidence=proof)
+                atomic_json(self.path, record)
+                bundle.run(['docker', 'start', current['Id']])
+                current = self.observe(record)
+            require(current['State'].get('Running') is True, 'source start not observed')
+            if current['HostConfig']['RestartPolicy'] != original['HostConfig']['RestartPolicy']:
+                proof = check()
+                policy = original['HostConfig']['RestartPolicy']
+                name, count = policy['Name'], policy['MaximumRetryCount']
+                require(name in ('no', 'always', 'unless-stopped', 'on-failure')
+                        and type(count) is int and count >= 0, 'unsupported original restart policy')
+                setting = name + (':' + str(count) if name == 'on-failure' and count else '')
+                record.update(recovery_step='POLICY_INTENT', recovery_evidence=proof)
+                atomic_json(self.path, record)
+                bundle.run(['docker', 'update', '--restart=' + setting, current['Id']])
+            current = self.observe(record)
+            proof = check()
+            require(current['State'].get('Running') is True
+                    and current['HostConfig'] == original['HostConfig'], 'source recovery readback failed')
+            receipt = dict(run_id=run, running=True, safe_to_resume=True,
+                           cancelled_jobs_preserved=True, replay_reviewed=True,
+                           saved_states_digest=record['original_sha256'],
+                           reconciliation_digest=proof['reconciliation_digest'])
+            atomic_json(self.directory / 'recovery.json', receipt)
+            record.update(phase='RECOVERED', recovery_step='DONE', recovery_evidence=proof)
             atomic_json(self.path, record)
             return receipt
 

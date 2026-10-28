@@ -68,14 +68,19 @@ application startup or independent backup copy.
   and fence work is refused. It is **not resume/rollback**. An active/orphan child
   holds the inherited host lease, so revoke reports busy until the real child exits.
   An actual parent-SIGKILL test exercises that lock, not a synthetic receipt.
+- `recover(run, guard)` (trusted in-process caller only): revoke local forward
+  operations, verify current target fence/revocation/no-activity and cancellation/
+  effect reconciliation, then recover the original container and restart policy.
+  Durable start intent suppresses uncertain replay; no unguarded recovery CLI.
+  See the [executed reversible integration and authority boundary](migration-reversible.md).
 
 These primitives intentionally report `all_writers_fenced: false` and
 `independent_copy_verified: false`; they cannot satisfy controller admission.
 Docker restart `no` persists in Docker metadata, but does **not** fence a Compose
 recreation, host service, another administrator or external app/job. A complete
 writer/input/restart inventory, owner/operator authority and proven input drain
-must precede real use. The script has no source start, target start, target fence,
-restore-and-start or permissive preflight method.
+must precede real use. The script has no unguarded source-start CLI, target start,
+target fence, restore-and-start or permissive preflight method.
 
 Conditional command shapes (not executed on either host):
 

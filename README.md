@@ -57,6 +57,7 @@ does not install or modify that launcher.
 - [Two-phase controller and owner Plan B](docs/migration-controller.md) — tested preparation, production adapter/activation still gated
 - [Cold capture and migration primitives](docs/migration-primitives.md) — real fixture capture/restore/sender tests; production admission still blocked
 - [Revised continuity and recovery stage](docs/migration-continuity.md) — accepted loss of unprocessed Telegram input only; processed state preserved, no blind replay
+- [Reversible preparation integration](docs/migration-reversible.md) — synthetic fence/capture/notice/controller recovery; production authority and activation still blocked
 - [Explicit encrypted cloud transfer](docs/cloud-backup.md)
 - [Daily host backup and retention](docs/server-backup.md)
 

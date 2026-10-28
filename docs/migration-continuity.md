@@ -104,16 +104,16 @@ SIGKILL before and after restore checks lock exclusion and retained intent witho
 a success receipt. These are not live Docker, Telegram, independent-host or real
 model acceptance tests. Report optional strict-suite skips separately.
 
-## Next bounded executable gate (offline only)
+## Reversible integration and next gate
 
-Build the **reversible source preparation/recovery integration**, not another
-legacy zero-loss prototype: execute the existing host/capture/notice primitives
-against disposable synthetic hosts and local HTTP, add a source recovery operation
-that consumes durable original settings only after positive persistent target fence,
-revoked outstanding operations and reconciled current cancellations/uncertain work.
-Exercise missing approval, failed notice and SIGKILL before/after each effect. Refuse
-unknown target ownership; retain source/target deltas and original deadlines.
+The **reversible source preparation/recovery integration** is now exercised against
+synthetic hosts and local HTTP: fence, real cold bundle/custody, notice, missing
+approval or failure, positive modeled target fence/revoke, current reconciliation,
+and original-source recovery. Real SIGKILL tests cover recovery start intent before
+and after the effect. Unknown target and target activity remain fail-closed.
 
-That gate is still open: this non-starting custody stage cannot substitute for it.
-Implement with RED/GREEN tests and keep it offline until separately reviewed. Full
-site adapter installation, private-state restore and live cutover remain unauthorized.
+See [the executable path, evidence boundaries and next bounded gate](migration-reversible.md).
+The next gate is production authority/admission binding with read-only inventory,
+not another legacy zero-loss prototype. The custody stage still cannot claim real
+independent-host protection. Full site adapter installation, private-state restore
+and live cutover remain unauthorized; fresh original-DM approval is still mandatory.

@@ -50,6 +50,9 @@ Production operations are supplied by a **reviewed, SHA256-pinned executable**
 are now executable and exercised on isolated fixtures, but deliberately cannot
 report production readiness. There is no pretend-success backend or permissive
 backup patch.
+The [reversible preparation composition](migration-reversible.md) now executes the
+pre-cutover path and guarded source recovery on synthetic hosts/local HTTP. Its
+production safety authority is absent; it is not the complete site executable.
 `CommandSite` actually invokes the pinned executable with an action argument and
 JSON request on stdin; requires one JSON object response, suppresses raw stderr,
 uses an allowlisted environment, and kills the local process group on timeout.
