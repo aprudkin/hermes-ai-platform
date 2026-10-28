@@ -204,6 +204,15 @@ report, not this public repository.
 
 ## Concrete next gate and handoff
 
+**Follow-up review:** the real disposable VM has now exercised accepted Docker
+restart after client SIGKILL, serialized terminal completion, sticky uncertainty
+and scoped fencing. See [Docker completion review](migration-docker-completion-review.md)
+for the selected finite-requester protocol, rejected universal-root gate and
+manual executable tests. It supersedes the generic root-bypass design goal and
+outdated target-login/environment blockers below, **not production admission or
+any executable safety gate**. Actual Docker effect-time expiry is not claimed;
+contract adoption remains explicitly separate.
+
 The old disconnected-primitives gate is closed **at the synthetic integration
 level**. The next gate is **production authority and admission binding**, not more
 legacy zero-loss prototypes and not permission to freeze.
