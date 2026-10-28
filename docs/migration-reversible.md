@@ -131,27 +131,115 @@ remote daemon enforces expiry after queued RPC work or that it has been revoked.
 Production must supply that enforcement and orphan receipts. Source originals,
 operation stores and verifier code must remain outside restored/live runtime trees.
 
+## Read-only production admission diagnostic
+
+The diagnostic is part of `PreparationSite`, not a second authority library:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/hermes_migration_preparation.py
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/hermes_migration_preparation.py --inventory /private/observations.json
+python3 tests/migration_admission_test.py -v
+```
+
+Both diagnostic commands return JSON **`ready=false`, `status=BLOCKED`, exit 2**.
+Without an authority, `PreparationSite.call('preflight', request)` returns the same
+report bound to the controller run. `Controller.advance` refuses admission and
+leaves the durable state exactly `PREPARED`: no freeze intent or deadline is created.
+Supplying `inventory=` explicitly selects diagnostic-only mode even when an authority
+object is also supplied: it never calls `hold`, host/stage/sender or any effects.
+The existing explicitly synthetic executable authority tests remain separate.
+
+Inventory is optional, **untrusted observations**, not a signed attestation or an
+executable policy loader. Each of `identity`, `writers`, `recreation`,
+`remote_operations`, `policy`, `custody`, `rescue`, `approval`, `watchdog` and
+`target_runtime` may hold a metadata object. Each row identifies the existing
+trusted authority method and missing production obligation. A nonempty object is
+only `present-unverified`; an absent/malformed row is `missing-or-invalid`.
+**Every row stays BLOCKED even for a complete inventory containing `verified=true`.**
+No inventory key can set ready/custody/start flags. Raw input values (including
+paths, operation IDs or accidental private data) are not copied into the report.
+
+Optional hazard fields give narrower diagnostics, never permission:
+
+```json
+{
+  "recreation": {"reboot_recreation_possible": true},
+  "remote_operations": {"pending": ["synthetic-operation"]},
+  "policy": {
+    "current": {"cancellations": "v2", "withdrawals": "v1", "effects": "v2"},
+    "reconciled": {"cancellations": "v1", "withdrawals": "v1", "effects": "v1"}
+  }
+}
+```
+
+Missing/non-list pending work is **unknown**, not zero. Missing reconciliation is
+reported separately from changed revisions. Policy is reread from the supplied
+inventory on every diagnosis; the caller must obtain fresh observations itself.
+An empty hazard list is not proof that queues are empty, revisions authentic or
+reconciliation safe. There is deliberately no production verifier/backend to
+upgrade these observations into admission. The authority's continuous lease,
+remote effect enforcement and current reconciliation still require real design
+and isolated-host proof, not more booleans.
+
+Tests exercise complete/incomplete inventories through the real controller,
+each absent gate, reboot recreation, pending/unknown remote effects, changed
+cancellation/withdrawal/effect revisions, malicious ready flags, refusal of every
+preparation effect in diagnostic mode, and read-only/sanitized CLI behavior.
+
+### Selected host observations, not production proof
+
+Read-only source inspection observed a running Compose-managed container with
+`unless-stopped`, a writable data bind, enabled Docker/containerd, an active enabled
+backup timer, and enabled cron/atd. Those are real writer/recreation owners, not
+fences. Process names and selected active-manager file hashes were read without
+message bodies, credentials, process arguments or Docker environment. Delegate
+interrupts/process checkpoints and local/CDP/cloud browser support do not establish
+remote operation expiry/revocation. The full manual/user-unit/remote-writer census,
+current cancellation/withdrawal/effect authority, independent custody and owner
+rescue access remain unproven. A fresh target read attempt using the handoff's
+literal login was denied (publickey); it was not replaced with a historical login.
+No assertion of an empty or persistently fenced target follows from that failure.
+Private observation timestamps, exact commands and failures remain in the task
+report, not this public repository.
+
 ## Concrete next gate and handoff
 
 The old disconnected-primitives gate is closed **at the synthetic integration
 level**. The next gate is **production authority and admission binding**, not more
 legacy zero-loss prototypes and not permission to freeze.
 
-Next bounded work, still without live writes:
+The read-only diagnostic is now connected and exercised; it closes **reporting and
+refusal**, not production admission. The next step is not another JSON verifier.
+Resolve the literal target-login discrepancy and independently confirm target
+identity/owner rescue access first. Do not silently substitute a historical account.
 
-1. Use only previously pinned, authorized read-only host access to map actual
-   source/target identities, container IDs, restart/recreation owners, host units,
-   jobs/delegates/browser writers, current cancellations/access withdrawals and
-   custody/access locations. Read selected metadata only; do not print secrets.
-2. Map each row to the authority port above, its exact effect/revocation mechanism
-   and independently testable evidence. Implement a read-only admission command
-   that reports each absent production proof as blocked, never fixture success.
-3. Exercise that command on synthetic complete/incomplete inventories, including
-   reboot recreation, pending remote effects and changed cancellation revisions.
-   Identify the exact separately authorized isolated-host rehearsal needed next.
-4. Stop at a concrete blocker if persistent host fencing, remote effect leases or
-   owner recovery access cannot be established without live changes. Do not install
-   a shim returning true or broaden this into another orchestration platform.
+**Next separately authorized rehearsal:** on an explicitly disposable isolated
+Linux/Docker VM, exercise a single source-like synthetic writer plus a real
+systemd/Compose recreation owner. Use the retained public image, generated files,
+no production data/credentials/bot/network delivery, no host-global Docker stop.
+Installing task-scoped units/authority state and rebooting that disposable VM are
+new host changes and need specific authorization; do not reboot a shared target.
+
+1. Define the exact task-owned resource IDs and trusted host-side enforcement
+   point outside restored state. Require all fixture writers/recreators to consult
+   the same durable fence/operation authority; a Docker stop alone is insufficient.
+2. Through the existing `PreparationSite` authority port, demonstrate original
+   settings capture, fence persistence across daemon/VM reboot, queued/late remote
+   operation refusal after nonrenewable expiry, positive revoke, and SIGKILL around
+   partial fence/recovery. If Docker RPC cannot be fenced at its actual effect,
+   stop and specify the missing enforcement mechanism; do not install a shim.
+3. Change a synthetic cancellation/withdrawal/effect revision while recovery is
+   pending: no source start until current reconciliation, no blind replay. Retain
+   original settings, uncertain intent and synthetic target delta through failures.
+4. Read back exact receipts, demonstrate recovery only under a positive persistent
+   target fence, then remove only task-owned fixture resources. Report real Docker,
+   reboot and lease results separately from still-simulated custody/approval.
+
+This bounded rehearsal closes one authority enforcement/recovery gate; it does not
+install a production site, activate timers, restore private state, enable Telegram,
+prove independent final custody or authorize cutover. If no isolated rebootable VM
+is authorized, the concrete blocker is that environment and the host-change scope,
+not permission to keep adding disconnected offline helpers.
 
 Before any production freeze, still required: independently verified target and
 owner rescue/key access; processed-state quiescence/all-writer durable fencing;

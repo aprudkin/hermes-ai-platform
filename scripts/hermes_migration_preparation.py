@@ -13,8 +13,56 @@ import hermes_backup_bundle as bundle
 
 
 class PreparationSite:
-    def __init__(self, host, stage, sender, authority=None):
+    def __init__(self, host, stage, sender, authority=None, *, inventory=None):
         self.host, self.stage, self.sender, self.authority = host, stage, sender, authority
+        # Supplying observations explicitly selects a non-acting diagnostic site.
+        # No JSON key or ready authority can turn this mode into an effects path.
+        self.inventory = inventory
+
+    def diagnose(self):
+        """Read-only obligations, NOT an authority or a production proof verifier."""
+        obligations = (
+            ('identity', 'preflight', 'independent source/target identity and boot binding'),
+            ('writers', 'source_quiesce/source_probe', 'processed-state quiescence of every writer'),
+            ('recreation', 'source_quiesce/target_fence/target_probe',
+             'persistent Docker/systemd/Compose/job/delegate/browser fences across reboot'),
+            ('remote_operations', 'hold/forward_guard/target_fence',
+             'remote nonrenewable expiry, durable operation identities and positive revoke'),
+            ('policy', 'recovery_guard', 'CURRENT cancellations/withdrawals/effects reconciled; no replay'),
+            ('custody', 'independent_copy', 'verified independent failure-domain custody'),
+            ('rescue', 'preflight', 'owner recovery keys, rescue access and runnable Plan B'),
+            ('approval', 'preflight', 'authenticated original-DM fresh approval after readiness'),
+            ('watchdog', 'hold/recovery_guard', 'external watchdog and boot/partial-fence recovery'),
+            ('target_runtime', 'preflight', 'target startup/delta/dialogue implementation and rehearsal'),
+        )
+        inventory = self.inventory if isinstance(self.inventory, dict) else {}
+        observations = {key: value for key, value in inventory.items() if isinstance(value, dict)}
+        hazards = []
+        if observations.get('recreation', {}).get('reboot_recreation_possible') is True:
+            hazards.append('reboot-recreation-possible')
+        pending = observations.get('remote_operations', {}).get('pending')
+        if not isinstance(pending, list):
+            hazards.append('remote-effects-unknown')
+        elif pending:
+            hazards.append('pending-remote-effects')
+        policy = observations.get('policy', {})
+        current, reconciled = policy.get('current'), policy.get('reconciled')
+        for revision in ('cancellations', 'withdrawals', 'effects'):
+            values = [value.get(revision) if isinstance(value, dict) else None
+                      for value in (current, reconciled)]
+            if not all(isinstance(value, str) and value for value in values):
+                hazards.append('unreconciled-' + revision)
+            elif values[0] != values[1]:
+                hazards.append('changed-' + revision)
+        # Hazards are a convenience, not exhaustive verification. An empty list
+        # means no reported hazard, NOT safe/empty queues or a reconciled policy.
+        return dict(ready=False, status='BLOCKED', contract='migration-site-v2',
+                    evidence_scope='observations-only', hazards=hazards,
+                    gates=[dict(gate=gate, authority_method=method, required=required,
+                                status='BLOCKED', reason='production-proof-unavailable',
+                                observation=('present-unverified' if isinstance(inventory.get(gate), dict)
+                                             and inventory[gate] else 'missing-or-invalid'))
+                           for gate, method, required in obligations])
 
     def call(self, action, request):
         try:
@@ -26,9 +74,9 @@ class PreparationSite:
     def dispatch(self, action, request):
         run = request['run_id']
         require(request.get('operation_id') == run + ':' + action, 'operation identity mismatch')
-        if self.authority is None:
+        if self.authority is None or self.inventory is not None:
             if action == 'preflight':
-                return dict(run_id=run, ready=False, contract='migration-site-v2')
+                return dict(self.diagnose(), run_id=run)
             raise Refused('production safety authority is not implemented')
         # The authority owns a site-wide lease across every primitive, not just
         # a stale JSON proof. It must enforce expiry AT effects on remote hosts.
@@ -88,3 +136,27 @@ class PreparationSite:
         require(proof.get('fenced') is True and proof.get('writers_stopped') is True,
                 'all-writer source fence missing')
         return dict(run_id=request['run_id'], running=False, fenced=True, writers_stopped=True)
+
+
+def main():
+    import argparse
+    import json
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description='Read-only production admission diagnostic; never authorizes effects')
+    parser.add_argument('--inventory', type=Path, help='optional observations JSON, never executable policy or proof')
+    args = parser.parse_args()
+    inventory = {}
+    if args.inventory is not None:
+        try:
+            inventory = json.loads(args.inventory.read_text())
+            if not isinstance(inventory, dict):
+                raise ValueError('expected object')
+        except (OSError, ValueError):
+            parser.error('inventory unreadable or invalid')
+    print(json.dumps(PreparationSite(None, None, None, inventory=inventory).diagnose(), sort_keys=True, indent=2))
+    return 2  # Deliberately BLOCKED, including a complete/optimistic inventory.
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
