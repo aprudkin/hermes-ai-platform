@@ -13,7 +13,10 @@ that a live restore or the bot's integrations have been tested.
 
 ## Create a recovery bundle
 
-Run from this repository on the controller, after authorizing a live backup:
+Run from this repository on an independent controller, after authorizing a live
+backup. **Never initiate capture inside the source container**: capture pauses
+that container and can freeze its own initiator. A host-side process can capture
+safely, but a copy kept only on that host is not independent recovery storage:
 
 ```bash
 task backup:hermes
@@ -35,22 +38,22 @@ Progress is not successful verification or current source health.
 
 This task calls `./scripts/hermes_backup.sh --full`. Its `b:hermes` and
 `hermes:backup` aliases, and the explicit `backup:hermes:full` task, all create
-full bundles. With the owner's existing global catalog, use `task -g b:hermes`
-(or `t b:hermes`) from any directory; the launcher delegates to this project.
+full bundles. Where the owner's existing global catalog delegates to this
+checkout, `task -g b:hermes` (or `t b:hermes`) invokes the same task from another
+directory. This repository does not install that catalog.
 
-This intentionally changes the old Task default from personal to full recovery.
-The direct script without flags still creates a personal backup for compatibility.
-The image-upgrade workflow continues to use full mode for its pre-upgrade backup.
+The direct script without flags creates a personal backup. Image-update
+preparation uses full mode for its pre-update backup and does not deploy.
 
 With no deployment variables set, the wrapper uses the `hermes-minimal` alias
 and its user and identity from the controller's `~/.ssh/config`. Configure that
 alias for the intended Hermes deployment. `HERMES_DEPLOY_HOST` overrides the
 alias/address; `HERMES_DEPLOY_SSH_USER` and `HERMES_DEPLOY_SSH_PRIVATE_KEY` optionally
 override the user and key. A supplied key must be an existing regular file.
-For compatibility, supplying either user or key without a host uses `server_ipv4`
-from local Terraform state instead of the alias. Set the host explicitly when
-overriding credentials for an alias. Empty values are treated as unset. There
-is no Terraform apply.
+When only user/key is supplied, the host still defaults to `hermes-minimal`.
+Empty values are treated as unset. No infrastructure-state lookup is performed.
+SSH uses `accept-new` on first use; confirm the intended host fingerprint
+separately before capture.
 
 The SSH account needs root or equivalent permissions to read all Hermes state,
 create the lock and private staging beneath `/opt/hermes`, and access Docker
@@ -120,8 +123,8 @@ from those events.
 `state.tar` includes profiles, models/configuration, skills, custom scripts and
 applications, memory, session databases and WAL files, cron definitions,
 plugins, dependencies under the data volume, credentials, and the deployed
-Compose/gateway selection/Telegram rollback files under `app/`. Runtime sockets
-are not useful recovery state. The target runtime must recreate its transient
+Compose/gateway selection and any retained Telegram rollback files under
+`app/`. Runtime sockets are not useful recovery state. The target runtime must recreate its transient
 process state; a filesystem backup does not preserve running processes.
 
 The helper refuses unsupported runtime boundaries rather than quietly omitting
@@ -130,9 +133,9 @@ mount, only transient `/run`, `/tmp`, `/var/tmp` content and the changed parent
 `/var` directory metadata are exempt from that refusal. Custom programs or
 configuration elsewhere must not silently disappear from recovery.
 The bundle does not preserve unrelated host files, Ubuntu packages, host
-firewall/SSH policy, controller private keys, local Terraform state, provider
-accounts, Telegram/BotFather settings, DNS or external service data. Keep access
-to those services and the controller's infrastructure records separately. It is
+firewall/SSH policy, controller private keys, host infrastructure records,
+provider accounts, Telegram/BotFather settings, DNS or external service data.
+Keep access to those services and host infrastructure records separately. It is
 a full recovery bundle for the supported Hermes deployment, not an audit or
 backup of every possible host customization.
 
@@ -173,6 +176,31 @@ providers, run jobs or connect to Telegram. A verification
 failure blocks recovery until the cause is understood; do not compensate by
 extracting the failed bundle over a live installation.
 
+## Moving to a different hosting provider
+
+The same restoration procedure applies on a compatible provider's Linux/Docker
+host; matching image architecture, storage format and data ownership matters
+more than the provider name. A step-by-step route, including cloud retrieval
+without the source, is in the online
+[provider-migration guide](https://github.com/aprudkin/hermes-ai-platform/blob/main/docs/migration.md).
+The restoration commands below remain self-contained when this guide is used
+as the bundle's `RESTORE.md` without that checkout.
+
+Plan the host rebuild separately. `/etc/hermes-backup`,
+`/usr/local/lib/hermes-backup`, `/var/lib/hermes-backup`, `/var/log/hermes-backup`
+and its host systemd units are outside `app/data` and **not in this bundle**.
+Restore their cloud/decryption configuration from independent protected recovery
+material and deliberately reinstall/test the host backup workflow. Likewise,
+prepare SSH accounts/authorized keys, firewall, Docker and provider controls
+separately. A client key saved inside the data volume is not server-side SSH
+authorization; host-access aliases and pinned host keys may still name the old
+server. Verify the new host independently instead of disabling host-key checks.
+
+Do not enable new production polling, agent jobs or persistent backup timers
+during rehearsal. Stop/fence old owners before accepted cutover, retain rollback
+material and review cancelled jobs. Moving the files does not itself establish
+new-host authentication, external connectivity or a functioning daily backup.
+
 ## Prepare a clean target
 
 Use a separately authorized Ubuntu 24.04+ host with Docker Engine and the
@@ -195,9 +223,10 @@ Use a new, empty `/opt/hermes` destination and no existing container named
 `hermes`. Its Linux filesystem must support the saved numeric ownership, ACLs
 and extended attributes. Check that non-user attributes, such as file
 capabilities or security labels, are compatible with the target's security
-policy before restoring them. Do not run the normal full Hermes installer over restored state: it
-reconciles selected settings, identities and credentials instead of preserving
-the snapshot verbatim. These steps do not authorize provisioning or access.
+policy before restoring them. Do not overwrite restored state with the
+repository reference configuration or a new setup process. Recovery preserves
+the snapshot rather than generic defaults. This repository does not install
+Docker or provision the target; these steps do not authorize host access.
 
 ## Restore files without starting Hermes
 

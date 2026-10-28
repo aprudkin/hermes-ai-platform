@@ -236,6 +236,57 @@ print(json.dumps({'stats': {'bytes': 123, 'speed': 45}, 'msg': 'fixture-obscured
         self.assertTrue((stray / 'archive.tar.gz').exists())
         self.assertFalse(self.events.exists())
 
+    def test_receipt_update_survives_previous_interrupted_write(self):
+        _, record = self.old_copy(server.RETENTION + 1)
+        path = self.state / 'receipts' / (record['run'] + '.json')
+        leftover = path.with_name(path.name + '.new')
+        leftover.write_text('{"cloud_deleted":')
+        record['cloud_deleted'] = True
+        server.atomic_json(path, record)
+        self.assertEqual(json.loads(path.read_text()), record)
+        self.assertEqual(leftover.read_text(), '{"cloud_deleted":')
+
+    def test_next_backup_ignores_but_preserves_interrupted_receipt_files(self):
+        old, record = self.old_copy(server.RETENTION + 1)
+        receipts = self.state / 'receipts'
+        leftovers = [receipts / (record['run'] + suffix)
+                     for suffix in ('.json.new', '.json.' + 'f' * 32 + '.new')]
+        for path in leftovers:
+            path.write_text('{"cloud_deleted":')
+        self.workflow.execute(self.current)
+        self.assertEqual(len(self.records()), 2)
+        self.assertTrue(all(path.read_text() == '{"cloud_deleted":' for path in leftovers))
+        self.assertFalse(old.exists())
+        self.assertIn('"event": "success"', self.journal.path.read_text())
+
+    def test_pending_receipts_never_authorize_cloud_rotation(self):
+        old, record = self.old_copy(server.RETENTION + 1)
+        receipt = self.state / 'receipts' / (record['run'] + '.json')
+        receipt.rename(receipt.with_name(receipt.name + '.new'))
+        self.workflow.execute(self.current)
+        self.assertEqual(len(self.records()), 1)
+        self.assertTrue(old.exists())
+        self.assertTrue((self.cloud / old.name).exists())
+        self.assertNotIn('deletefile', self.events.read_text())
+
+    def test_pending_receipts_reject_symlinks_public_modes_and_unknown_entries(self):
+        _, record = self.old_copy(server.RETENTION + 1)
+        receipt = self.state / 'receipts' / (record['run'] + '.json')
+        pending = receipt.with_name(receipt.name + '.new')
+        pending.symlink_to(receipt)
+        with self.assertRaises(server.CloudError):
+            self.records()
+        pending.unlink()
+        pending.write_text('{}')
+        pending.chmod(0o644)
+        with self.assertRaises(server.CloudError):
+            self.records()
+        pending.unlink()
+        unknown = pending.with_name('unknown.new')
+        unknown.write_text('{}')
+        with self.assertRaises(server.CloudError):
+            self.records()
+
     def test_same_run_refuses_retry(self):
         (self.state / 'runs' / self.current).mkdir()
         with self.assertRaises(FileExistsError):

@@ -5,6 +5,9 @@
 Task and its global `b:hermes` launcher remain unchanged. No global cloud launcher
 is installed. This workflow does not access SSH, pause Hermes, restore data,
 start jobs, delete old copies, create a schedule or provision an account/key.
+The separate [daily host workflow](server-backup.md) has its own systemd units
+and narrow receipt-based retention; that policy does not apply to this manual
+Task or its `full/` namespace.
 
 ## Prerequisites and authorization
 

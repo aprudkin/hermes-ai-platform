@@ -1,17 +1,18 @@
-# Autonomous server backup — separate from controller Tasks
+# Daily host backup — separate from controller Tasks
 
-This is the separately approved server workflow for `hermes-minimal`. It does
-not change `Taskfile.yml`, the local full-backup default, global launchers, the
-Hermes image, identity, jobs, or Telegram ownership. Implementation/tests and
-preparation are authorized; **installation, production/cloud execution, timer
-activation and Git publication still require separate authorization**. Nothing
-in this guide claims that the new workflow is installed or live-verified.
+This host-local workflow maintains backups of Chebi on `hermes-minimal`. It
+runs outside the source container and is separate from controller Tasks and
+Hermes jobs. It does not change the local full-backup default, global launchers,
+the Hermes image, identity, agent jobs or Telegram ownership. **Installation,
+production/cloud execution, timer activation and Git publication require their
+own authorization**. This guide describes the supported behavior, not evidence
+that a particular host has it installed, active or live-verified.
 
 ## Agreed policy
 
 - Full capture on the host, outside the paused container, using the existing
   trusted bundle generator/verifier. Direct server → Mail.ru crypt → server
-  readback; no archive transit through the Mac.
+  readback; no archive transit through a controller.
 - Daily **08:00 Europe/Moscow**, explicit in the timer. `Persistent=true`
   requests one catch-up when the timer is activated after a missed calendar
   window, including after reboot. This can pause Hermes outside 08:00. It does
@@ -33,8 +34,8 @@ in this guide claims that the new workflow is installed or live-verified.
   cloud copies are retained, not rediscovered and deleted. No other writer may
   reuse this namespace or edit its receipts/configs while the service runs.
 - Preserve the current verified cloud copy even through prolonged subsequent
-  failures. Old manual `full/` copies, probes, the previous direct workspace,
-  recovery kits, and unknown/unreceipted objects are outside all cleanup.
+  failures. Manual `full/` copies, recovery kits and all objects outside this
+  workflow's successful receipt ledger are outside cloud cleanup.
 - On the server retain the latest verified original. Remove this run's readback
   only after successful verification and a durable receipt. Remove previous
   receipted originals after the new round trip and cloud rotation succeed,
@@ -47,7 +48,7 @@ in this guide claims that the new workflow is installed or live-verified.
   a separate continuously running deletion service. Unknown/operator log files
   are not touched and do not count toward the workflow quota.
 
-## Installed boundaries
+## Host installation boundaries
 
 | Path | Purpose / access |
 | --- | --- |
@@ -73,15 +74,15 @@ counters may include retries; they are not proof of final archive size.
 
 These configs contain reversibly obscured secrets, **not encrypted secrets at
 rest**. Root compromise exposes cloud access and decryption keys. Preserve the
-recovery kit on the Mac and preferably another protected independent device
-or password manager; that additional copy has not yet been confirmed. Having
-two files on this server does not make the recovery keys independent. Local
+recovery kit on the owner's independent controller and another protected device
+or password manager. Verify that independent access rather than assuming it.
+Two files on this server do not make the recovery keys independent. Local
 original/readback archives are also plaintext protected by permissions, unlike
-the crypt-encrypted cloud objects. The installer does not configure disk
-encryption, accounts, quotas or a secret-management service.
+the crypt-encrypted cloud objects. The host backup installer does not configure
+disk encryption, accounts, quotas or a secret-management service.
 
-The first implementation intentionally supports the previously verified
-**Linux amd64 rclone v1.75.2** binary only, SHA-256
+The host workflow supports only the approved **Linux amd64 rclone v1.75.2**
+binary, SHA-256
 `ed7ab1f17876bb006c3df3949a3044959671afd9112362dacaa5dd1647735bc1`.
 No download or package installation occurs implicitly. Obtain/stage that
 upstream binary through a separately authorized, checksum-verified process.
@@ -126,21 +127,32 @@ passed but later housekeeping/source checks did not. Only terminal `success`
 means the entire workflow completed. Neither status means restored data or a
 functionally verified restored runtime.
 
-## Prepared deployment procedure — not authorization to execute
+Receipt updates use unique private staging names before an atomic rename. A
+crash may leave a staging file behind, including the older fixed `.json.new`
+format. Recognized private regular staging files are retained for inspection
+but ignored when loading successful receipts; they never authorize rotation.
+Symlinks, public staging files, oversized entries and unknown names still fail
+closed. A later run can therefore proceed without deleting or overwriting the
+interrupted evidence. Do not manually promote a staging file to a receipt.
 
-Use a targeted installation, **not the full Hermes installer/playbook**.
-The existing single-use direct-operation driver must not become the timer job.
+## Install and activate host backups — separate authorizations
+
+Use only the dedicated host-backup installer described below. It installs the
+backup package and units, not Docker or Hermes. The timer runs the installed
+workflow, not a one-use maintenance command or an agent cron job.
 
 1. Obtain immediate authorization for the exact target, protected transfer,
-   permanent rclone/config installation, and read-only host preflight. Re-read
-   the sshai workflow before host commands. Confirm Ubuntu/systemd, amd64,
+   permanent rclone/config installation, and read-only host preflight. Confirm
+   the intended SSH alias/fingerprint and permissions, Ubuntu/systemd, amd64,
    Docker access, source state, time synchronization, disk capacity, private
-   path ancestry and absence of another backup schedule. Verify the Mac's
-   working config matches its independent recovery kit without printing values.
+   path ancestry and absence of another backup schedule. Verify the owner's
+   working config matches the independent recovery kit without printing values.
 2. Stage this reviewed checkout, the two separately sourced configs and the
    approved binary into a new private root-owned directory outside `app/data`.
-   Input files for configs/binary must have no group/other permissions. Do not
-   transfer secret values through command strings, captured stdin or logs.
+   The staged checkout and its ancestry must satisfy the installer's root-owned
+   trusted-path checks. Config/binary inputs must be root-owned regular files
+   without symlinks or group/other permissions. Do not transfer secret values
+   through command strings, captured stdin or logs.
 3. The prepared host-local entry point is
    `scripts/install_server_backup.py`. Its required arguments are
    `--confirm-external-mutation`, `--upload-config`, `--recovery-config`, and
@@ -173,7 +185,7 @@ service to finish; interrupt it only deliberately with the owned-unpause limits
 above and verify source state afterward. Keep all code, credentials, receipts
 and archives for inspection; disabling is not uninstalling or deleting data.
 
-## Local evidence and remaining live checks
+## Local evidence and operational acceptance
 
 `bash tests/hermes_server_backup_test.sh` uses temporary fixture paths, fake
 Docker/rclone, real archive generation/verifiers and subprocess termination.
@@ -183,3 +195,10 @@ systemd unit parsing, installed root permissions, host pause cleanup, actual
 cloud deletion/readback, catch-up and timer execution remain deployment-stage
 checks. Do not conflate local green tests, a successful installer, a successful
 manual live backup, and an observed scheduled backup.
+
+Check freshness and failures from a process outside the Hermes container: a
+paused or failed agent cannot reliably report its own backup failure. This
+repository does not establish an independent alerting service. Record the
+actual runner/access and a verified alert or freshness check before claiming
+monitoring is active. After recovery, separately review the host backup timer
+as well as agent schedules; never revive cancelled reports or mail monitoring.

@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CIToolchainTests(unittest.TestCase):
+    def test_ci_installs_only_current_validation_dependencies(self):
+        text = (ROOT / '.github/workflows/validate.yml').read_text().lower()
+        for retired in ('setup-terraform', 'ansible-core', 'ansible-lint', 'ansible-galaxy'):
+            self.assertNotIn(retired, text)
+        self.assertIn('shellcheck', text)
+        self.assertIn('python3-yaml', text)
+
     def test_task_is_pinned_and_installed_before_real_validation(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/validate.yml').read_text())
         steps = workflow['jobs']['validate']['steps']

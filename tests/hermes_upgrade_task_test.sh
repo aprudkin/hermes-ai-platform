@@ -8,7 +8,7 @@ fake_bin="$fixture_root/bin"
 fixture_repo="$fixture_root/repo"
 command_log="$fixture_root/commands.log"
 review_file="$fixture_root/review.json"
-mkdir -p "$fake_bin" "$fixture_repo/"{scripts,docker,docs,installer}
+mkdir -p "$fake_bin" "$fixture_repo/"{scripts,docker,docs}
 cp "$repo_root/scripts/"hermes_{upgrade.sh,backup.sh,backup_bundle.py,backup_progress.py} "$fixture_repo/scripts/"
 cp "$repo_root/docs/"{backup-restore.md,operations.md} "$fixture_repo/docs/"
 cp "$repo_root/README.md" "$fixture_repo/"
@@ -40,14 +40,14 @@ cat >"$fake_bin/terraform" <<'FAKE'
 printf 'terraform %s\n' "$*" >>"$FAKE_COMMAND_LOG"
 printf '203.0.113.44\n'
 FAKE
-cat >"$fixture_repo/installer/install.sh" <<'FAKE'
+cat >"$fixture_repo/scripts/validate.sh" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'installer %s\n' "$*" >>"$FAKE_COMMAND_LOG"
-[[ "$*" == validate ]] || exit 92
+printf 'validate %s\n' "$*" >>"$FAKE_COMMAND_LOG"
+[[ "$*" == --all ]] || exit 92
 [[ "${FAIL_VALIDATE:-no}" != yes ]] || exit 42
 FAKE
-chmod +x "$fake_bin/"* "$fixture_repo/installer/install.sh"
+chmod +x "$fake_bin/"* "$fixture_repo/scripts/validate.sh"
 run_upgrade() {
   PATH="$fake_bin:$PATH" FAKE_COMMAND_LOG="$command_log" \
     FAKE_BUNDLE="$fixture_root/bundle.tar.gz" FAKE_TAG="${FAKE_TAG:-v2}" \
@@ -68,17 +68,17 @@ Path(sys.argv[1]).write_text(json.dumps({
     "compatibility": "compatible", "summary": "Fixture review",
     "contracts": {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
                   for name in ("README.md", "docs/operations.md", "docker/docker-compose.yml")},
-    "checks": [{"command": "./installer/install.sh validate", "result": "passed"}]
+    "checks": [{"command": "./scripts/validate.sh --all", "result": "passed"}]
 }))
 PY
 }
-for variable in HERMES_DEPLOY_SSH_USER HERMES_DEPLOY_SSH_PRIVATE_KEY; do
-  : >"$command_log"
-  if (export "$variable="; run_upgrade) >"$fixture_root/error" 2>&1; then
-    fail "missing SSH input must fail"
-  fi
-  [[ ! -s "$command_log" ]] || fail "missing SSH input reached backup"
-done
+# An explicit bad key must fail before host access; otherwise SSH alias config
+# may supply both the user and identity without duplicated environment settings.
+: >"$command_log"
+if HERMES_DEPLOY_SSH_PRIVATE_KEY="$fixture_root/missing" run_upgrade >"$fixture_root/error" 2>&1; then
+  fail 'an explicit missing SSH key must fail'
+fi
+[[ ! -s "$command_log" ]] || fail 'missing SSH key reached host access'
 for variable in CONFIRM_PUSH CONFIRM_DEPLOY; do
   : >"$command_log"
   if (export "$variable=yes"; run_upgrade) >"$fixture_root/error" 2>&1; then
@@ -91,7 +91,7 @@ if DIRTY=' M unrelated' run_upgrade >"$fixture_root/error" 2>&1; then fail 'dirt
 [[ ! -s "$command_log" ]] || fail 'dirty checkout reached backup'
 : >"$command_log"
 if FAIL_BACKUP=yes run_upgrade >"$fixture_root/error" 2>&1; then fail 'failed backup accepted'; fi
-! grep -Eq '^(gh|installer) ' "$command_log" || fail 'backup failure reached later actions'
+! grep -Eq '^(gh|validate) ' "$command_log" || fail 'backup failure reached later actions'
 printf 'PASS input, legacy authorization, clean-tree and backup gates\n'
 
 : >"$command_log"
@@ -100,7 +100,7 @@ if FAKE_TAG=v1 run_upgrade >"$fixture_root/same-pin" 2>&1; then
 fi
 grep -q 'live deployment is UNKNOWN' "$fixture_root/same-pin" \
   || { printf '%s\n' "$(<"$fixture_root/same-pin")" >&2; fail 'missing deployment uncertainty'; }
-! grep -q '^installer ' "$command_log" || fail 'same pin invoked installer'
+! grep -q '^validate ' "$command_log" || fail 'same pin invoked installer'
 archives=("$fixture_root/backups/"*.tar.gz)
 [[ "${#archives[@]}" -eq 1 ]] || fail 'same pin must still retain one recovery capture'
 python3 "$repo_root/scripts/hermes_backup_bundle.py" verify "${archives[0]}" full
@@ -122,7 +122,7 @@ p.write_text(json.dumps(value))
 PY
   : >"$command_log"
   if run_upgrade >"$fixture_root/error" 2>&1; then fail "invalid $mutation accepted"; fi
-  ! grep -q '^installer ' "$command_log" || fail 'invalid review reached validation/deployment'
+  ! grep -q '^validate ' "$command_log" || fail 'invalid review reached validation/deployment'
   cp "$fixture_root/review-original" "$review_file"
 done
 printf 'PASS missing, stale and incompatible reviews fail closed\n'
@@ -130,14 +130,14 @@ printf 'PASS missing, stale and incompatible reviews fail closed\n'
 : >"$command_log"
 run_upgrade >"$fixture_root/prepared"
 grep -q 'image: nousresearch/hermes-agent:v2' "$fixture_repo/docker/docker-compose.yml" || fail 'pin not prepared'
-grep -qx 'installer validate' "$command_log" || fail 'candidate not validated'
-! grep -q '^installer deploy' "$command_log" || fail 'preparation deployed'
+grep -qx 'validate --all' "$command_log" || fail 'candidate not validated'
+! grep -q '^validate deploy' "$command_log" || fail 'preparation deployed'
 grep -q 'NOT committed, pushed or deployed' "$fixture_root/prepared" || fail 'missing scope of evidence'
 printf 'PASS candidate validated without commit, push or deployment\n'
 
 : >"$command_log"
 if run_upgrade >"$fixture_root/retry" 2>&1; then fail 'same pin retry returned success'; fi
-! grep -q '^installer ' "$command_log" || fail 'retry silently deployed'
+! grep -q '^validate ' "$command_log" || fail 'retry silently deployed'
 printf 'image: nousresearch/hermes-agent:v1\n' >"$fixture_repo/docker/docker-compose.yml"
 make_review
 if FAIL_VALIDATE=yes run_upgrade >"$fixture_root/error" 2>&1; then fail 'candidate validation failure swallowed'; fi
@@ -146,10 +146,11 @@ if run_upgrade >"$fixture_root/retry" 2>&1; then fail 'failed validation retry r
 printf 'PASS failed validation and retry stay failures\n'
 
 : >"$command_log"
-if HERMES_DEPLOY_HOST='' run_upgrade >"$fixture_root/error" 2>&1; then fail 'same pin unexpectedly prepared'; fi
-grep -Eq '^terraform -chdir=.*/terraform output -raw server_ipv4$' "$command_log" || fail 'legacy host resolution lost'
+if HERMES_DEPLOY_HOST='' HERMES_DEPLOY_SSH_USER='' HERMES_DEPLOY_SSH_PRIVATE_KEY='' run_upgrade >"$fixture_root/error" 2>&1; then fail 'same pin unexpectedly prepared'; fi
+! grep -q '^terraform ' "$command_log" || fail 'retired infrastructure lookup was invoked'
+grep -q 'hermes-minimal python3 - capture' "$command_log" || fail 'default SSH alias was not used'
 for task_name in update:hermes hermes:update; do
   task --taskfile "$repo_root/Taskfile.yml" --dry "$task_name" >"$fixture_root/task" 2>&1
   grep -q './scripts/hermes_upgrade.sh' "$fixture_root/task" || fail 'legacy task alias lost'
 done
-printf 'PASS task aliases and legacy host lookup preserved\n'
+printf 'PASS task aliases and default SSH alias preserved\n'

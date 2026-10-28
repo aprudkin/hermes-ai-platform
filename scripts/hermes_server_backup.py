@@ -68,7 +68,8 @@ def stamp(run):
 
 
 def atomic_json(path, value):
-    temporary = path.with_name(path.name + '.new')
+    # A crash may leave the staging file behind. Never reuse or overwrite it.
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.new')
     with temporary.open('x') as stream:
         json.dump(value, stream, sort_keys=True)
         stream.write('\n')
@@ -85,6 +86,12 @@ def atomic_json(path, value):
 def load_receipts(state):
     records = []
     for path in sorted((state / 'receipts').iterdir()):
+        if re.fullmatch(RUN_RE.pattern + r'\.json(?:\.[0-9a-f]{32})?\.new', path.name):
+            # Only a completed atomic rename makes a receipt authoritative. Keep
+            # interrupted private staging files as evidence, never rotate from them.
+            stamp(path.name.split('.', 1)[0])
+            require(private(path).st_size < 8192, 'oversized pending receipt')
+            continue
         require(path.suffix == '.json', 'unexpected receipt entry; inspect before retry')
         run = path.stem
         created = stamp(run)

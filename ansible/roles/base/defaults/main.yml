@@ -1,8 +1,0 @@
----
-base_root_home: /root
-base_root_owner: root
-base_root_group: root
-base_root_password_lock_enabled: true
-base_root_authorized_keys_path: "{{ base_root_home }}/.ssh/authorized_keys"
-base_root_authorized_keys_backup_path: >-
-  {{ base_root_home }}/.ssh/authorized_keys.pre-hermes-hardening
