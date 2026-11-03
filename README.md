@@ -28,6 +28,11 @@ SSH alias for an account with the required Docker/read permissions.
 `HERMES_DEPLOY_HOST`, `HERMES_DEPLOY_SSH_USER` and
 `HERMES_DEPLOY_SSH_PRIVATE_KEY` are optional explicit connection overrides.
 
+- `task auth:hermes:codex` — repeat the browser device-code login for Chebi's
+  OpenAI Codex credentials on `hermes-minimal`, profile `manager`; no PTY or restart.
+  Open the displayed URL, enter the code and keep the terminal open until success.
+  Adds a priority-0 credential without removing existing ones. The global launcher
+  also exposes `task -g auth:hermes:codex` from any directory.
 - `task backup:hermes` / `task b:hermes` — full state, dependencies and exact image;
   verify before publishing the local archive. Default: `~/backup/hermer/`.
 - `task backup:hermes:personal` — lighter state-only archive; image and recognized

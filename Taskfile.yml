@@ -6,6 +6,18 @@ tasks:
     cmds:
       - ./scripts/validate.sh --all
 
+  auth:hermes:codex:
+    desc: Re-authenticate Chebi with OpenAI Codex through a browser device code
+    summary: |
+      Connects to hermes-minimal and authenticates the manager profile in the hermes container.
+      Open https://auth.openai.com/codex/device, enter the displayed code and wait for success.
+      Keep this terminal open. No SSH/Docker PTY, automatic restart or scheduled job.
+      Adds an OAuth credential at priority 0; existing credentials are not removed.
+    cmds:
+      - ssh -T hermes-minimal 'docker exec -i -e PYTHONUNBUFFERED=1 hermes hermes -p manager auth add openai-codex --type oauth --priority 0 --no-browser'
+    interactive: true
+    silent: true
+
   backup:hermes:
     aliases: [b:hermes, hermes:backup]
     desc: Create and verify a full Hermes recovery bundle on this computer
