@@ -23,7 +23,7 @@ jobs:
       - name: Install local validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ripgrep shellcheck python3-yaml
+          sudo apt-get install --yes ripgrep shellcheck python3-yaml python3-dotenv
 
       - name: Run real validation gates
         run: ./scripts/validate.sh --all
