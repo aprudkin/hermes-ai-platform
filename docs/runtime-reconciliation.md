@@ -67,9 +67,10 @@ acceptance, a current Mac connection, cron adoption, a restored account or a
 complete restored runtime. They do not enable the event-calendar previews in
 existing reminder jobs. Existing running code/configuration is not replaced.
 
-The previously diagnosed quoted-report/duplicate-clarification accounting
-problem is not claimed fixed by source versioning. Preserve separately reviewed
-business-rule changes and delivery uncertainty rather than replaying old data.
+The accounting quote and confirmation fixes are described and regression-tested
+in [the accounting package](../tools/accounting/README.md). Source publication does
+not activate the optional native-input collector or replay historical approvals.
+Preserve delivery uncertainty and require separate live activation evidence.
 
 For actual recovery use [state-first boundaries](state-first.md) and the
 [private recovery bundle](backup-restore.md), then reconcile cancellation and

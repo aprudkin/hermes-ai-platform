@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import re
+from cash_message_context import message_body
 
 NUMBER = r'\d+(?:[.,]\d{1,2})?'
 METHOD = r'(?:CashApp|Cash|Venmo|Zelle|PayPal|Apple\s+Pay)'
@@ -25,7 +26,7 @@ class Compact:
 
 
 def body_lines(content):
-    return [line.strip() for line in content.splitlines()
+    return [line.strip() for line in message_body(content).splitlines()
             if line.strip() and not SENDER.fullmatch(line.strip())]
 
 
@@ -233,6 +234,13 @@ def record_operator(ledger, source_row_id, timestamp, platform_message_id, conte
             if prior:
                 if prior[0] != minor:
                     reviews.append(f'{day}: {compact.operator} {amount} — другое начисление уже записано')
+                continue
+            closures = c.execute('''SELECT period_end FROM period_closures
+                WHERE recipient_kind='operator' AND recipient_key=? AND register_key=?
+                AND confirmation_source_row_id<?''',
+                (compact.operator.casefold(),compact.name.casefold(),source_row_id)).fetchall()
+            if any(day <= r['period_end'] for r in closures):
+                reviews.append(f'{day}: {compact.operator} {amount} — историческое начисление после закрытия периода')
                 continue
             boundaries = [r[0] for r in c.execute('SELECT timestamp FROM period_starts WHERE source_row_id<?', (source_row_id,))]
             boundaries += [r[0] for r in c.execute('SELECT command_timestamp FROM operator_payouts WHERE command_source_row_id<? AND operator_key=?',

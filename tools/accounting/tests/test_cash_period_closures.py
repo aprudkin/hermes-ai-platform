@@ -1,10 +1,16 @@
 import unittest
+import os
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 from test_cash_ledger_monitor import load_module
 
 class PeriodClosureTests(unittest.TestCase):
-    @unittest.expectedFailure  # Original source has no Ledger.confirm_period_closure; see README.
+    def setUp(self):
+        env = patch.dict(os.environ, BABLOMAT_ELENA_ID='810000002')
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_confirmation_closes_model_and_agency_but_not_operator(self):
         m = load_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -21,12 +27,12 @@ class PeriodClosureTests(unittest.TestCase):
                     self.assertIn('Начало периода: не установлено', notice)
                     self.assertIn('По: 03.10 (сб)', notice)
                 ledger.process_message(source_row_id=row_id, timestamp=1791244898.0,
-                    platform_message_id=str(row_id),
+                    platform_message_id='52' if row_id == 1 else str(row_id),
                     content=f'Касса Fixture\n{day}\nКлиент Hr/100\nTotal: 100\nМодели: 60\nАгентских: 40\nОператор Анна: 10')
             notice = ledger.cash_notice(4)
-            self.assertIn('🫦 Fixture: $60', notice)
-            self.assertIn('🎩 Агентство: $40', notice)
-            self.assertIn('🥷🏻 Анна: $20', notice)
+            self.assertIn('🫦 Fixture: 60$', notice)
+            self.assertIn('🎩 Агентство: 40$', notice)
+            self.assertIn('🥷🏻 Анна: 20$', notice)
             args=dict(confirmation_source_row_id=3, confirmation_message_id='59',
                 report_source_row_id=1,report_message_id='52',confirmer_id='810000002',
                 timestamp=1791244898.0,recipient_kind='model',recipient_key='Fixture',

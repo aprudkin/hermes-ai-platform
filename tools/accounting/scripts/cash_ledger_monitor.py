@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from cash_message_context import message_body
 
 SENDER_RE = re.compile(r"^\[([^|\]]+)\|(\d+)\]\s*$")
 TOTAL_RE = re.compile(r"\b(?:total|итого|итог|тотал|всего|общий\s+итог)\b", re.IGNORECASE)
@@ -109,7 +110,9 @@ class Ledger:
             connection.close()
 
     def _initialize(self) -> None:
+        from cash_period_closure import SCHEMA
         with self._connection() as connection:
+            connection.execute(SCHEMA)
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS messages (
@@ -302,6 +305,19 @@ class Ledger:
                     review = Compact('cash', parsed.register_name, (accounting_date,), '', tuple(collisions))
                     save_source(self, source_row_id, timestamp, platform_message_id, content, review, 'unverified')
                     return ProcessResult('unverified', None, parsed.claimed_total_minor, None)
+        if parsed.register_name:
+            with self._connection() as c:
+                closed = c.execute('''SELECT 1 FROM period_closures WHERE register_key=?
+                    AND confirmation_source_row_id<? AND period_end>=?''',
+                    (parsed.register_name.casefold(),source_row_id,accounting_date)).fetchone()
+                if closed:
+                    reason = 'Исторический отчёт за уже закрытый период; нужна отдельная сверка, начисления не изменены'
+                    c.execute('''CREATE TABLE IF NOT EXISTS deferred_reports(source_row_id INTEGER PRIMARY KEY,
+                        timestamp REAL,platform_message_id TEXT,raw_content TEXT,reason TEXT)''')
+                    c.execute('INSERT OR IGNORE INTO deferred_reports VALUES(?,?,?,?,?)',
+                        (source_row_id,timestamp,platform_message_id,content,reason))
+                    c.execute('INSERT OR IGNORE INTO parse_reviews VALUES(?,?,?)',(source_row_id,1,reason))
+                    return ProcessResult('unverified',None,parsed.claimed_total_minor,None)
         if parsed.register_name is not None and parsed.claimed_total_minor is not None:
             computed = sum(entry.amount_minor for entry in parsed.entries)
         elif parsed.entries:
@@ -379,8 +395,9 @@ class Ledger:
         return ProcessResult(status, computed, claimed, difference)
 
     def check_finance_message(self, *, source_row_id: int, timestamp: float, content: str,
-                              compact_enabled: bool = False) -> str | None:
+                              compact_enabled: bool = False, platform_message_id: str | None = None) -> str | None:
         raw_content = content
+        content = message_body(content)
         compact = None
         if compact_enabled:
             from cash_compact_formats import parse_compact
@@ -424,8 +441,14 @@ class Ledger:
         date = day.isoformat()
         with self._connection() as c:
             c.execute('CREATE TABLE IF NOT EXISTS finance_checks(source_row_id INTEGER PRIMARY KEY,checked_date TEXT,model_name TEXT,raw_content TEXT,status TEXT,checks_json TEXT)')
-            c.execute('INSERT OR IGNORE INTO finance_checks VALUES(?,?,?,?,?,?)',
-                      (source_row_id,date,name,raw_content,status,json.dumps(checks,ensure_ascii=False)))
+            columns = {r[1] for r in c.execute('PRAGMA table_info(finance_checks)')}
+            for column, kind in [('platform_message_id','TEXT'),('timestamp','REAL')]:
+                if column not in columns:
+                    c.execute(f'ALTER TABLE finance_checks ADD COLUMN {column} {kind}')
+            c.execute('''INSERT OR IGNORE INTO finance_checks
+                (source_row_id,checked_date,model_name,raw_content,status,checks_json,platform_message_id,timestamp)
+                VALUES(?,?,?,?,?,?,?,?)''',
+                (source_row_id,date,name,raw_content,status,json.dumps(checks,ensure_ascii=False),platform_message_id,timestamp))
         if compact:
             from cash_compact_formats import save_source
             save_source(self, source_row_id, timestamp, None, raw_content, compact, status)
@@ -477,6 +500,9 @@ class Ledger:
                     ORDER BY command_source_row_id DESC LIMIT 1
                 """, (name.casefold(), source_row_id)).fetchone()
                 start = self._period_cutoff(source_row_id)
+                closure = connection.execute("""SELECT * FROM period_closures
+                    WHERE recipient_kind=? AND recipient_key=? AND confirmation_source_row_id<?
+                    ORDER BY report_source_row_id DESC LIMIT 1""", (kind, name.casefold(), source_row_id)).fetchone()
                 cutoff = max(start, payout["command_source_row_id"] if payout else 0)
                 rows = connection.execute(f"""
                     WITH latest AS (
@@ -484,18 +510,21 @@ class Ledger:
                         FROM messages WHERE register_name IS NOT NULL AND source_row_id>? AND source_row_id<=?
                         GROUP BY register_name, accounting_date
                     )
-                    SELECT m.accounting_date, o.{kind}_name AS name, o.amount_minor
+                    SELECT m.source_row_id, m.register_name, m.accounting_date, o.{kind}_name AS name, o.amount_minor
                     FROM latest l JOIN messages m USING(source_row_id)
                     JOIN {table} o USING(source_row_id) ORDER BY m.accounting_date
                 """, (cutoff, source_row_id)).fetchall()
                 rows = [r for r in rows if r["name"].casefold() == name.casefold()]
                 if kind == 'operator':
-                    rows += [dict(accounting_date=r['accounting_date'], name=r['operator_name'], amount_minor=r['amount_minor'])
+                    rows += [dict(r, name=r['operator_name'])
                         for r in self._compact_operator_rows(cutoff, source_row_id + 1)
                         if r['operator_name'].casefold() == name.casefold()]
                     rows.sort(key=lambda r: r['accounting_date'])
+                rows = self._unclosed_rows(rows, kind, 'name', source_row_id)
                 amount = sum(r["amount_minor"] for r in rows)
-                if start and (not payout or start > payout["command_source_row_id"]):
+                if closure and kind != 'operator' and cutoff <= closure['report_source_row_id']:
+                    period = f"с выплаты {short_date(closure['period_end'])}"
+                elif start and (not payout or start > payout["command_source_row_id"]):
                     date = short_date(rows[0]["accounting_date"] if rows else report["accounting_date"])
                     period = f"новый период с {date}"
                 elif payout:
@@ -513,7 +542,7 @@ class Ledger:
 
     def record_period_start(self, *, source_row_id: int, timestamp: float,
                             platform_message_id: str | None, content: str) -> bool:
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        lines = [line.strip() for line in message_body(content).splitlines() if line.strip()]
         if not lines or not SENDER_RE.fullmatch(lines[0]):
             return False
         sender_id = SENDER_RE.fullmatch(lines[0]).group(2)
@@ -527,6 +556,30 @@ class Ledger:
                 (source_row_id, platform_message_id, timestamp, content),
             )
         return True
+
+    def confirm_period_closure(self, **confirmation) -> str:
+        from cash_period_closure import confirm
+        return confirm(self, **confirmation)
+
+    def _closure_cutoff(self, kind: str, key: str, before_row_id: int, register: str | None = None) -> int:
+        if kind == 'operator' and register is None:
+            return 0  # Operator confirmations close one register, not every model.
+        with self._connection() as c:
+            return c.execute("""SELECT COALESCE(MAX(report_source_row_id),0) FROM period_closures
+                WHERE recipient_kind=? AND recipient_key=? AND confirmation_source_row_id<?
+                AND (? IS NULL OR register_key=?)""",
+                (kind, key.casefold(), before_row_id, register.casefold() if register else None,
+                 register.casefold() if register else None)).fetchone()[0]
+
+    def _unclosed_rows(self, rows, kind, name_field, before_row_id):
+        with self._connection() as c:
+            closures = c.execute("""SELECT * FROM period_closures
+                WHERE recipient_kind=? AND confirmation_source_row_id<?""", (kind, before_row_id)).fetchall()
+        return [r for r in rows if not any(
+            r[name_field].casefold() == cl['recipient_key']
+            and r['register_name'].casefold() == cl['register_key']
+            and r['source_row_id'] <= cl['report_source_row_id']
+            and r['accounting_date'] <= cl['period_end'] for cl in closures)]
 
     def _period_cutoff(self, before_row_id: int) -> int:
         with self._connection() as connection:
@@ -705,7 +758,7 @@ class Ledger:
                       AND register_name IS NOT NULL
                     GROUP BY register_name, accounting_date
                 )
-                SELECT m.accounting_date, o.operator_name, o.amount_minor
+                SELECT m.source_row_id, m.register_name, m.accounting_date, o.operator_name, o.amount_minor
                 FROM latest_reports AS latest
                 JOIN messages AS m ON m.source_row_id = latest.source_row_id
                 JOIN operators AS o ON o.source_row_id = m.source_row_id
@@ -713,7 +766,7 @@ class Ledger:
                 """,
                 (previous_cutoff, command_source_row_id),
             ).fetchall()
-            rows = list(rows) + self._compact_operator_rows(previous_cutoff, command_source_row_id)
+            rows = self._unclosed_rows(list(rows) + self._compact_operator_rows(previous_cutoff, command_source_row_id), 'operator', 'operator_name', command_source_row_id)
             daily: dict[str, int] = {}
             for row in rows:
                 if row["operator_name"].casefold() == requested_key:
@@ -837,7 +890,7 @@ class Ledger:
                       AND register_name IS NOT NULL
                     GROUP BY register_name, accounting_date
                 )
-                SELECT m.accounting_date, o.model_name, o.amount_minor
+                SELECT m.source_row_id, m.register_name, m.accounting_date, o.model_name, o.amount_minor
                 FROM latest_reports AS latest
                 JOIN messages AS m ON m.source_row_id = latest.source_row_id
                 JOIN models AS o ON o.source_row_id = m.source_row_id
@@ -845,6 +898,7 @@ class Ledger:
                 """,
                 (previous_cutoff, command_source_row_id),
             ).fetchall()
+            rows = self._unclosed_rows(rows, 'model', 'model_name', command_source_row_id)
             daily: dict[str, int] = {}
             for row in rows:
                 if row["model_name"].casefold() == requested_key:
@@ -974,7 +1028,7 @@ class Ledger:
                       AND register_name IS NOT NULL
                     GROUP BY register_name, accounting_date
                 )
-                SELECT m.accounting_date, o.agency_name, o.amount_minor
+                SELECT m.source_row_id, m.register_name, m.accounting_date, o.agency_name, o.amount_minor
                 FROM latest_reports AS latest
                 JOIN messages AS m ON m.source_row_id = latest.source_row_id
                 JOIN agencies AS o ON o.source_row_id = m.source_row_id
@@ -982,6 +1036,7 @@ class Ledger:
                 """,
                 (previous_cutoff, command_source_row_id),
             ).fetchall()
+            rows = self._unclosed_rows(rows, 'agency', 'agency_name', command_source_row_id)
             daily: dict[str, int] = {}
             for row in rows:
                 if row["agency_name"].casefold() == requested_key:
@@ -1254,7 +1309,7 @@ def run_monitor(
         if any(row[key] == 1 for key in ('is_bot', 'sender_is_bot') if key in row.keys()):
             last_seen = max(last_seen, row_id)
             continue
-        content = row["content"] or ""
+        content = message_body(row["content"] or "")
         enabled = guidance_after is not None and row_id > guidance_after
         compact = None
         advice = None
@@ -1263,12 +1318,24 @@ def run_monitor(
             from cash_compact_formats import parse_compact, format_guidance
             compact = parse_compact(content, float(row['timestamp']))
             advice = format_guidance(content, float(row['timestamp'])) if gate.get('guidance_enabled', True) is True else None
+        from cash_period_closure import process_confirmation
+        native = None
+        native_path = state_path.parent / 'native-inputs.db'
+        if native_path.exists() and row['platform_message_id']:
+            from cash_native_input import read_native
+            native = read_native(native_path, chat_id, str(row['platform_message_id']))
+        closure_notice = process_confirmation(ledger, row, chat_id=chat_id, native=native, review_sender=review_sender)
+        if closure_notice is not None:
+            emit(closure_notice)
+            last_seen = max(last_seen, row_id)
+            continue
         if ledger.record_period_start(source_row_id=row_id, timestamp=float(row["timestamp"]),
-                                      platform_message_id=row["platform_message_id"], content=content):
+                                      platform_message_id=row["platform_message_id"], content=row["content"] or ""):
             last_seen = max(last_seen, row_id)
             continue
         finance_notice = ledger.check_finance_message(source_row_id=row_id,
-            timestamp=float(row["timestamp"]), content=content, compact_enabled=enabled)
+            timestamp=float(row["timestamp"]), content=row["content"] or "", compact_enabled=enabled,
+            platform_message_id=row["platform_message_id"])
         if finance_notice is not None:
             if compact and compact.review_lines and review_sender is not None:
                 reference = f"https://t.me/c/{chat_id.removeprefix('-100')}/{row['platform_message_id']}" if chat_id.startswith('-100') and row['platform_message_id'] else f"сообщение {row['platform_message_id']}"
@@ -1318,7 +1385,7 @@ def run_monitor(
             source_row_id=row_id,
             timestamp=float(row["timestamp"]),
             platform_message_id=row["platform_message_id"],
-            content=content,
+            content=row["content"] or "",
             compact_enabled=enabled,
         )
         last_seen = max(last_seen, row_id)
@@ -1408,6 +1475,7 @@ def _amount_minor(token: str) -> int:
 
 
 def _extract_accounting_date(content: str, timestamp: float) -> str:
+    content = message_body(content)
     fallback = datetime.fromtimestamp(timestamp, timezone.utc)
     is_register_report = parse_message(content).register_name is not None
     if is_register_report:
@@ -1476,6 +1544,7 @@ def _payment_split(line: str) -> int | None:
 
 
 def parse_message(content: str) -> ParsedMessage:
+    content = message_body(content)
     sender_id = None
     sender_name = None
     register_name = None

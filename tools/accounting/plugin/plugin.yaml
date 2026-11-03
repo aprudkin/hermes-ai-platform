@@ -1,0 +1,3 @@
+name: accounting-native-input
+version: 1.0.0
+description: "Profile- and exact-chat-scoped native Telegram evidence sidecar; no sending or polling."
