@@ -98,7 +98,10 @@ class HostOperations:
                 require(not self.path.exists() and not (self.directory / 'original.json').exists(),
                         'unbound operation records require review')
                 original = bundle.inspect('container', 'hermes')
-                bundle.validate_container(original, self.root, 'hermes')
+                # This operation preserves the original container, not a
+                # portable restore. capture-cold separately applies the strict
+                # archive validator; never rewrite the saved inspection.
+                bundle.validate_container(original, self.root, 'hermes', in_place=True)
                 atomic_json(self.directory / 'original.json', original)
                 record = {'version': 1, 'run_id': run, 'root': str(self.root), 'phase': 'FENCING',
                           'revoked': False,

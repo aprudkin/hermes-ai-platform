@@ -80,14 +80,18 @@ def profile_for(container):
     return cmd[2]
 
 
-def validate_container(container, root, name):
+def validate_container(container, root, name, *, in_place=False):
     require(container.get("Name") == "/" + name and container.get("State", {}).get("Running")
             and not container["State"].get("Paused"), "container must be running and initially unpaused")
-    return validate_runtime(container, root)
+    return validate_runtime(container, root, in_place=in_place)
 
 
-def validate_runtime(container, root):
-    """Shared configuration admission; never fabricate running-state metadata."""
+def validate_runtime(container, root, *, in_place=False):
+    """Archive admission by default; in-place keeps the original container only.
+
+    The narrow in-place mask exception does not establish portable restoration.
+    All other configuration gates apply to both paths.
+    """
     require(HEX.fullmatch(container.get("Image", "")), "invalid image identity")
     mounts = container.get("Mounts", [])
     require(len(mounts) == 1, "unsupported mounts")
@@ -121,7 +125,14 @@ def validate_runtime(container, root):
               "/proc/latency_stats", "/proc/timer_list", "/proc/timer_stats", "/proc/sched_debug",
               "/proc/scsi", "/sys/firmware", "/sys/devices/virtual/powercap"]
     readonly = ["/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"]
-    require(host.get("MaskedPaths") is None or sorted(host["MaskedPaths"]) == sorted(masked),
+    # Docker 26.1.5's observed default omits /proc/interrupts. It is safe to
+    # retain only on the exact original container: HostOperations binds the
+    # entire HostConfig before effects and rechecks it on fence/recovery.
+    # restore_compose does not serialize masks, so archive callers MUST keep
+    # the default strict check. Unknown/custom lists remain unsupported.
+    in_place_masked = [path for path in masked if path != "/proc/interrupts"]
+    require(host.get("MaskedPaths") is None or sorted(host["MaskedPaths"]) == sorted(masked)
+            or (in_place and sorted(host["MaskedPaths"]) == sorted(in_place_masked)),
             "custom masked paths unsupported")
     require(host.get("ReadonlyPaths") is None or sorted(host["ReadonlyPaths"]) == sorted(readonly),
             "custom readonly paths unsupported")

@@ -63,6 +63,17 @@ and container/image/config/mount identity. Controller `saved_states_digest`, whe
 already committed, must match it. A partial first fence can recover before that
 controller checkpoint exists, using the host's durable original record.
 
+Initial `HostOperations.fence` admission permits the observed Docker 26.1.5
+mask list (without `/proc/interrupts`) **only for in-place preservation of the
+original container**. All other admission gates are unchanged. The saved inspect
+is not normalized: subsequent fence/recovery compares the entire HostConfig,
+except for the managed restart policy, against that exact original receipt.
+Unknown mask lists and changed masks/configuration are refused. This is not
+cross-engine restore compatibility: ordinary and cold archive capture retain
+strict mask validation because restore Compose does not explicitly serialize
+those masks. A refused capture keeps pending evidence and can still take guarded
+original-source recovery; it cannot publish a successful archive receipt.
+
 The caller must hold a site-wide recovery lease for the entire call. Under the
 stable host and backup locks, recovery requires a fresh guard for the same run:
 

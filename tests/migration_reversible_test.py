@@ -41,8 +41,100 @@ class ReversibleTest(unittest.TestCase):
         self.guard_calls.append(True)
         return dict(self.proof)
 
-    def test_recovery_blocks_missing_or_changed_current_proofs(self):
+    def prepare_docker26_host(self):
         self.prepare_host()
+        # Observed Docker 26.1.5 default: unlike the portable archive contract,
+        # this does not mask /proc/interrupts. No security override was used.
+        self.container['HostConfig']['MaskedPaths'] = [
+            '/proc/asound', '/proc/acpi', '/proc/kcore', '/proc/keys',
+            '/proc/latency_stats', '/proc/timer_list', '/proc/timer_stats',
+            '/proc/sched_debug', '/proc/scsi', '/sys/firmware',
+            '/sys/devices/virtual/powercap']
+        self.container['HostConfig']['ReadonlyPaths'] = [
+            '/proc/bus', '/proc/fs', '/proc/irq', '/proc/sys', '/proc/sysrq-trigger']
+        self.container['HostConfig']['RestartPolicy'] = dict(Name='on-failure', MaximumRetryCount=3)
+        self.save_fixture()
+
+    def test_docker26_masks_allow_only_original_in_place_recovery(self):
+        self.prepare_docker26_host()
+        with mock.patch.dict('os.environ', self.env):
+            with self.assertRaisesRegex(self.module.bundle.BundleError, 'custom masked paths'):
+                self.module.bundle.validate_container(self.container, self.root, 'hermes')
+            self.assertTrue(self.ops.fence(self.run_id)['docker_fenced'])
+            original = (self.opsdir / 'original.json').read_bytes()
+            self.assertEqual(json.loads(original), self.container)
+            with self.assertRaisesRegex(Refused, 'cold capture failed'):
+                self.ops.capture(self.run_id)
+            self.assertFalse((self.opsdir / 'capture.json').exists())
+            self.assertFalse((self.opsdir / 'full.tar.gz').exists())
+            self.assertNotIn('docker image save', self.log.read_text())
+            self.assertTrue(self.ops.recover(self.run_id, self.guard)['running'])
+        self.assertEqual(json.loads(self.fixture.read_text())['container']['HostConfig'],
+                         self.container['HostConfig'])
+        self.assertEqual((self.opsdir / 'original.json').read_bytes(), original)
+        self.assertEqual(self.log.read_text().count('docker start '), 1)
+
+    def test_docker26_in_place_preserves_other_admission_gates(self):
+        import copy
+        self.prepare_docker26_host()
+        changes = [('HostConfig', 'MaskedPaths', []),
+                   ('HostConfig', 'MaskedPaths', ['/proc/keys']),
+                   ('HostConfig', 'ReadonlyPaths', []),
+                   ('HostConfig', 'Privileged', True),
+                   ('HostConfig', 'NetworkMode', 'none'),
+                   ('HostConfig', 'PidMode', 'host'),
+                   ('HostConfig', 'Runtime', 'unknown'),
+                   ('Config', 'OpenStdin', True),
+                   ('Config', 'Cmd', ['other'])]
+        with mock.patch.dict('os.environ', self.env):
+            for section, key, value in changes:
+                with self.subTest(section=section, key=key, value=value):
+                    data = json.loads(self.fixture.read_text())
+                    data['container'] = copy.deepcopy(self.container)
+                    data['container'][section][key] = value
+                    self.fixture.write_text(json.dumps(data))
+                    with self.assertRaises(self.module.bundle.BundleError):
+                        self.ops.fence(self.run_id)
+                    self.assertFalse((self.opsdir / 'original.json').exists())
+                    self.assertFalse(self.ops.anchor.exists())
+            self.assertNotIn('docker update', self.log.read_text())
+            self.assertNotIn('docker stop', self.log.read_text())
+
+    def test_docker26_original_binding_rejects_mutations_without_start(self):
+        import copy
+        from hermes_migration_controller import atomic_json
+        self.prepare_docker26_host()
+        with mock.patch.dict('os.environ', self.env):
+            self.ops.fence(self.run_id)
+            frozen = json.loads(self.fixture.read_text())
+            for section, key, value in [('HostConfig', 'MaskedPaths', []),
+                                        ('HostConfig', 'ReadonlyPaths', []),
+                                        ('HostConfig', 'Memory', 99),
+                                        ('Config', 'User', '1234')]:
+                with self.subTest(section=section, key=key):
+                    changed = copy.deepcopy(frozen)
+                    changed['container'][section][key] = value
+                    self.fixture.write_text(json.dumps(changed))
+                    with self.assertRaises(Refused):
+                        self.ops.recover(self.run_id, self.guard)
+            for key, value in [('Id', 'f' * 64), ('Image', 'sha256:' + 'f' * 64),
+                               ('Mounts', [])]:
+                with self.subTest(key=key):
+                    changed = copy.deepcopy(frozen)
+                    changed['container'][key] = value
+                    self.fixture.write_text(json.dumps(changed))
+                    with self.assertRaises(Refused):
+                        self.ops.recover(self.run_id, self.guard)
+            self.fixture.write_text(json.dumps(frozen))
+            original = copy.deepcopy(self.container)
+            original['HostConfig']['MaskedPaths'] = []
+            atomic_json(self.opsdir / 'original.json', original)
+            with self.assertRaisesRegex(Refused, 'original runtime receipt changed'):
+                self.ops.recover(self.run_id, self.guard)
+            self.assertNotIn('docker start ', self.log.read_text())
+
+    def test_recovery_blocks_missing_or_changed_current_proofs(self):
+        self.prepare_docker26_host()
         with mock.patch.dict('os.environ', self.env):
             self.ops.fence(self.run_id)
             for field in self.proof:
@@ -66,7 +158,7 @@ class ReversibleTest(unittest.TestCase):
             self.assertEqual((self.opsdir / 'original.json').read_bytes(), original)
 
     def test_recovered_receipt_cannot_be_forged_or_outdate_reconciliation(self):
-        self.prepare_host()
+        self.prepare_docker26_host()
         from hermes_migration_controller import atomic_json
         with mock.patch.dict('os.environ', self.env):
             self.ops.fence(self.run_id)

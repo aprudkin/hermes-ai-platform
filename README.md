@@ -1,3 +1,7 @@
+# Cancelled migration — source preservation only
+
+This branch preserves reviewed pending source fixes for a cancelled migration. It is not an active plan, deployment, cutover, installed controller, or permission to resume the move. The active runtime and cancellation remain unchanged.
+
 # Chebi: maintenance and recovery
 
 One persistent Hermes Agent. This repository holds its approved instruction
