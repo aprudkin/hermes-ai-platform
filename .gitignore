@@ -27,6 +27,8 @@ recovery.conf
 *.sqlite3
 
 # Local execution/editor artifacts
+/.ansible/.lock
+/terraform/.terraform/
 __pycache__/
 .venv/
 .DS_Store
