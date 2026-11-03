@@ -10,9 +10,26 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    env:
+      HERMES_SRC: ${{ runner.temp }}/hermes-contract
+      HERMES_HOME: ${{ github.workspace }}/.generated/test-profile
+      PYTHON: python3
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Fetch pinned real Hermes provider contracts outside the project tree
+        run: |
+          git init "$HERMES_SRC"
+          git -C "$HERMES_SRC" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$HERMES_SRC" fetch --depth 1 origin 345cd2b057a452236de401d3534b8502a7465e8d
+          git -C "$HERMES_SRC" checkout --detach FETCH_HEAD
+          test "$(git -C "$HERMES_SRC" rev-parse HEAD)" = 345cd2b057a452236de401d3534b8502a7465e8d
+
+      - name: Set up test Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
 
       - name: Install Task
         uses: go-task/setup-task@v2
@@ -23,7 +40,8 @@ jobs:
       - name: Install local validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ripgrep shellcheck python3-yaml python3-dotenv
+          sudo apt-get install --yes ripgrep shellcheck python3-yaml ffmpeg fonts-dejavu-core fonts-dejavu-extra fonts-liberation
+          python3 -m pip install --requirement requirements-test.txt
 
       - name: Run real validation gates
         run: ./scripts/validate.sh --all
