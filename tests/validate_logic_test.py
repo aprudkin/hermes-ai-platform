@@ -35,6 +35,15 @@ class ValidationTests(unittest.TestCase):
         result = self.run_gate('--structure')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_job_environment_does_not_use_unavailable_runner_context(self):
+        import yaml
+        workflow = yaml.safe_load((self.repo / '.github/workflows/validate.yml').read_text())
+        for name, job in workflow['jobs'].items():
+            for key, value in job.get('env', {}).items():
+                with self.subTest(job=name, key=key):
+                    self.assertNotRegex(str(value), r'\$\{\{\s*runner\.',
+                                        'runner context is unavailable in jobs.<job>.env')
+
     def test_missing_current_backup_file_is_rejected(self):
         (self.repo / 'scripts/hermes_server_backup.py').unlink()
         result = self.run_gate('--structure')

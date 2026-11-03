@@ -213,6 +213,8 @@ done
 
 ### Missing runner tools and API consistency
 
+- Validate GitHub workflow expressions with actionlint before pushing CI changes; YAML parsing and a successful local shell gate do not validate context availability. `jobs.<job>.env` cannot use `runner`; use an allowed context such as `github` or set runner-specific paths inside an executed step. A failed workflow with zero jobs and no downloadable logs can be a parse failure, not a test/billing failure; inspect run metadata and reproduce the semantic error. Preserve a narrow regression and do not claim that tests ran when GitHub rejected the workflow.
+
 - Diagnose an exit127 from the exact failed job log before changing application code. Existing task-alias tests can require a native executable that the workflow never installs; install the real pinned tool before validation and keep a regression contract rather than skipping or faking the tests. For Go Task, the primary installation docs currently specify `go-task/setup-task@v2`; verify the selected release and download checksum.
 - Fine-grained PAT access to the Checks API can return403 while Actions workflow/job/log reads remain authorized. Use the accessible Actions endpoints and actual job conclusions; an aggregate commit status with zero status entries is not proof of CI completion.
 - Reproduce CI PATH isolation faithfully: setup actions often install tools outside Python's directory and /usr/bin. A test fixture that deliberately hides selected CLIs must retain other genuine dependencies in its limited PATH; verify with Task and Python installed in separate directories. Do not make it pass by skipping alias tests, moving tools into arbitrary global directories, or weakening strict-mode assertions.

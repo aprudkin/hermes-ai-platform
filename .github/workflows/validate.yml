@@ -11,7 +11,7 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     env:
-      HERMES_SRC: ${{ runner.temp }}/hermes-contract
+      HERMES_SRC: ${{ github.workspace }}/../hermes-contract
       HERMES_HOME: ${{ github.workspace }}/.generated/test-profile
       PYTHON: python3
     steps:
