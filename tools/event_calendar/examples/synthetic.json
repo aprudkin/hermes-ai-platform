@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "fixture_notice": "SYNTHETIC: invented event and travel numbers, not actual traffic observations; public venue address only.",
+  "event": {
+    "name": "Пример: вечер в музее",
+    "date": "2030-11-04",
+    "time": "19:00",
+    "venue": "Третьяковская галерея",
+    "address": "Москва, Лаврушинский переулок, 10",
+    "synthetic": true
+  },
+  "events": [
+    {
+      "name": "Пример: вечер в музее",
+      "date": "2030-11-04",
+      "time": "19:00",
+      "venue": "Третьяковская галерея",
+      "address": "Москва, Лаврушинский переулок, 10",
+      "synthetic": true
+    },
+    {
+      "name": "Пример: вечер в музее",
+      "date": "2030-11-17",
+      "time": "18:00",
+      "venue": "Третьяковская галерея",
+      "address": "Москва, Лаврушинский переулок, 10",
+      "synthetic": true
+    },
+    {
+      "name": "Пример: вечер в музее",
+      "date": "2030-11-25",
+      "time": "21:30",
+      "venue": "Третьяковская галерея",
+      "address": "Москва, Лаврушинский переулок, 10",
+      "synthetic": true
+    },
+    {
+      "name": "Пример: вечер в музее",
+      "date": "2030-12-19",
+      "time": "20:00",
+      "venue": "Третьяковская галерея",
+      "address": "Москва, Лаврушинский переулок, 10",
+      "synthetic": true
+    }
+  ],
+  "route": {
+    "travel_minutes_used": 16,
+    "arrival_buffer_minutes": 30,
+    "observed_minutes_range": [
+      14,
+      16
+    ],
+    "observed_at": "2030-11-03T12:00:00+03:00",
+    "estimate_kind": "observed",
+    "synthetic": true
+  }
+}

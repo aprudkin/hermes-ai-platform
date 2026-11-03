@@ -1,0 +1,8 @@
+# Test-only dependencies; install in an isolated environment, never the live profile.
+pytest==9.2.0
+requests==2.34.2
+PyYAML==6.0.3
+python-dotenv==1.2.4
+Pillow==13.0.0
+httpx==0.28.1
+python-telegram-bot==22.8

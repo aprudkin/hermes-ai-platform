@@ -43,7 +43,7 @@ def private_copy(source, destination, label, max_size=None):
             shutil.copyfileobj(incoming, outgoing, length=1024 * 1024)
 
 
-def read_config(path):
+def read_config(path, crypt_root=CRYPT_ROOT, directory_name_encryption="true"):
     config = configparser.ConfigParser(interpolation=None)
     with path.open() as stream:
         config.read_file(stream)
@@ -54,9 +54,9 @@ def read_config(path):
     require(set(crypt) == {"type", "remote", "filename_encryption",
                            "directory_name_encryption", "password", "password2"},
             "unsupported crypt configuration options")
-    require(crypt["type"] == "crypt" and crypt["remote"] == CRYPT_ROOT
+    require(crypt["type"] == "crypt" and crypt["remote"] == crypt_root
             and crypt["filename_encryption"] == "standard"
-            and crypt["directory_name_encryption"] == "true"
+            and crypt["directory_name_encryption"] == directory_name_encryption
             and crypt["password"] and crypt["password2"],
             "expected encrypted Hermes remote and both recovery keys")
     require(set(transport) == {"type", "url", "vendor", "user", "pass"},

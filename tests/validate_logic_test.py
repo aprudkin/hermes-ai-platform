@@ -35,6 +35,15 @@ class ValidationTests(unittest.TestCase):
         result = self.run_gate('--structure')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_job_environment_does_not_use_unavailable_runner_context(self):
+        import yaml
+        workflow = yaml.safe_load((self.repo / '.github/workflows/validate.yml').read_text())
+        for name, job in workflow['jobs'].items():
+            for key, value in job.get('env', {}).items():
+                with self.subTest(job=name, key=key):
+                    self.assertNotRegex(str(value), r'\$\{\{\s*runner\.',
+                                        'runner context is unavailable in jobs.<job>.env')
+
     def test_missing_current_backup_file_is_rejected(self):
         (self.repo / 'scripts/hermes_server_backup.py').unlink()
         result = self.run_gate('--structure')
@@ -68,6 +77,24 @@ class ValidationTests(unittest.TestCase):
         result = self.run_gate('--secrets')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_runtime_token_lookup_is_not_a_persisted_secret(self):
+        (self.repo / 'lookup-example.sh').write_text(
+            'GITHUB_TOKEN=$(printf runtime-only)\n'
+            'GITHUB_TOKEN="${GITHUB_TOKEN:-}"\n')
+        result = self.run_gate('--secrets')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_opaque_static_token_assignment_remains_rejected(self):
+        value = 'synthetic-opaque-credential-value'
+        (self.repo / 'leak.txt').write_text('GITHUB_TOKEN="' + value + '"\n')
+        result = self.run_gate('--secrets')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_nonempty_token_fallback_remains_rejected(self):
+        (self.repo / 'leak.txt').write_text('GITHUB_TOKEN="${GITHUB_TOKEN:-synthetic-private-default}"\n')
+        self.assertNotEqual(self.run_gate('--secrets').returncode, 0)
 
     def test_scanner_failure_is_not_treated_as_clean(self):
         scanner = self.bin / 'rg'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-owner server capture/crypt round trip with receipt-scoped retention.
+"""Single-owner encrypted daily upload with metadata-only readback and scoped retention.
 
 Fixed production paths. No installation, scheduling, restoration or cloud discovery.
 Run only after authorizing this workflow; see docs/server-backup.md.
@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import re
 import selectors
 import shutil
@@ -26,10 +27,12 @@ STATE = Path('/var/lib/hermes-backup')
 KEYS = Path('/etc/hermes-backup')
 LOGS = Path('/var/log/hermes-backup')
 RUNTIME = Path('/opt/hermes')
-REMOTE = 'hermes-backup:scheduled-v1/'
+REMOTE = 'hermes-backup:'
+LEGACY_REMOTE = 'hermes-backup:scheduled-v1/'
+CRYPT_ROOT = 'mailru-hermes:Backup/Hermes'
 RCLONE_SHA = 'ed7ab1f17876bb006c3df3949a3044959671afd9112362dacaa5dd1647735bc1'
 RUN_RE = re.compile(r'(\d{8}T\d{6}Z)-[0-9a-f]{32}')
-RETENTION = 168 * 3600
+RETENTION_DAYS = 3
 LOG_AGE = 30 * 86400
 LOG_TOTAL = 100 * 1024 * 1024
 LOG_FILE = 1024 * 1024
@@ -97,8 +100,16 @@ def load_receipts(state):
         created = stamp(run)
         require(private(path).st_size < 8192, 'oversized receipt')
         record = json.loads(path.read_text())
-        require(set(record) == {'run', 'created', 'bytes', 'sha256', 'cloud_deleted',
-                                'bundle_integrity_verified', 'state_restored', 'restored_runtime_verified'}
+        extra = {'cloud_layout', 'cloud_metadata_checked', 'cloud_roundtrip_verified'} if 'cloud_layout' in record else set()
+        if record.get('cloud_layout') == 'dated-v2':
+            extra.add('cloud_directory')
+        if 'cloud_removed_externally' in record:
+            extra.add('cloud_removed_externally')
+        require(('cloud_layout' not in record or (record['cloud_layout'] in ('dated-v1', 'dated-v2')
+                and record.get('cloud_metadata_checked') is True and record.get('cloud_roundtrip_verified') is False))
+                and ('cloud_removed_externally' not in record or record['cloud_removed_externally'] is True)
+                and set(record) == {'run', 'created', 'bytes', 'sha256', 'cloud_deleted',
+                                'bundle_integrity_verified', 'state_restored', 'restored_runtime_verified'} | extra
                 and record['run'] == run and type(record['created']) is int and record['created'] == created
                 and type(record['bytes']) is int and record['bytes'] > 0
                 and isinstance(record['sha256'], str) and re.fullmatch('[0-9a-f]{64}', record['sha256'])
@@ -106,6 +117,8 @@ def load_receipts(state):
                 and record['bundle_integrity_verified'] is True
                 and record['state_restored'] is False and record['restored_runtime_verified'] is False,
                 'invalid receipt; rotation refused')
+        if record.get('cloud_layout') == 'dated-v2':
+            record_directory(record)
         records.append(record)
     return records
 
@@ -115,13 +128,37 @@ def archive_name(run):
     return 'hermes-scheduled-' + run + '.tar.gz'
 
 
+def date_directory(run):
+    date = dt.datetime.fromtimestamp(stamp(run), ZoneInfo('Europe/Moscow'))
+    return f'{date.year % 100:02d}-{date.month}-{date.day}'
+
+
+def record_directory(record):
+    base = date_directory(record['run'])
+    if record.get('cloud_layout') == 'dated-v1':
+        return base
+    directory = record.get('cloud_directory')
+    require(record.get('cloud_layout') == 'dated-v2' and isinstance(directory, str)
+            and re.fullmatch(re.escape(base) + r'(?:-(?:[2-9]|[1-9][0-9]+))?', directory),
+            'invalid receipt cloud directory')
+    return directory
+
+
+def record_remote(record):
+    prefix = REMOTE + record_directory(record) + '/' if record.get('cloud_layout') in ('dated-v1', 'dated-v2') else LEGACY_REMOTE
+    return prefix + archive_name(record['run'])
+
+
 def rotation_candidates(records, current):
     """Only locally receipted successful copies; never infer ownership from a listing."""
     now = stamp(current)
+    timezone = ZoneInfo('Europe/Moscow')
+    cutoff = dt.datetime.fromtimestamp(now, timezone).date() - dt.timedelta(days=RETENTION_DAYS - 1)
     require(any(r['run'] == current and not r['cloud_deleted'] for r in records),
             'current verified receipt missing')
     require(all(r['created'] <= now for r in records), 'clock moved backwards; rotation refused')
-    return [r for r in records if not r['cloud_deleted'] and r['created'] < now - RETENTION]
+    return [r for r in records if not r['cloud_deleted'] and not r.get('cloud_removed_externally')
+            and dt.datetime.fromtimestamp(r['created'], timezone).date() < cutoff]
 
 
 class Journal:
@@ -241,24 +278,79 @@ class Workflow:
                 'source not confirmed running and unpaused')
         self.journal.emit('source_running_unpaused')
 
-    def rclone(self, action, source, destination=None, recovery=False):
+    def rclone(self, action, source, destination=None, legacy=False):
         command = [str(PACKAGE / 'rclone'), action, str(source)]
         if destination is not None:
             command.append(str(destination))
-        command += ['--config', str(KEYS / ('recovery.conf' if recovery else 'upload.conf')),
+        command += ['--config', str(KEYS / ('upload.conf' if legacy else 'daily-upload.conf')),
                     '--retries', '1', '--low-level-retries', '3', '--contimeout', '30s',
                     '--timeout', '5m', '--stats', '5s', '--stats-log-level', 'NOTICE', '--use-json-log']
         if action in ('copy', 'copyto'):
             command += ['--immutable', '--size-only']
         phase(command, self.env, self.journal, action)
 
+    def metadata(self, remote, expected_bytes, absent=False):
+        result = subprocess.run([str(PACKAGE / 'rclone'), 'lsjson', remote, '--stat',
+                                 '--config', str(KEYS / 'daily-recovery.conf'), '--retries', '1',
+                                 '--low-level-retries', '3', '--contimeout', '30s', '--timeout', '5m'],
+                                env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=360)
+        if absent:
+            require(result.returncode in (3, 4), 'remote archive already exists or absence unconfirmed')
+            return
+        require(result.returncode == 0 and len(result.stdout) < 8192, 'cloud metadata unavailable')
+        value = json.loads(result.stdout)
+        require(value.get('IsDir') is False and value.get('Name') == remote.rsplit('/', 1)[-1]
+                and type(value.get('Size')) is int and value['Size'] == expected_bytes,
+                'cloud metadata size or name mismatch')
+        self.journal.emit('cloud_metadata_checked', bytes=expected_bytes)
+
     def verify(self, path):
         phase([sys.executable, str(PACKAGE / 'hermes_backup_bundle.py'), 'verify', str(path), 'full'],
               self.env, self.journal, 'verify')
 
+    def allocate_directory(self, run):
+        # main holds the stable workflow flock throughout allocation and upload.
+        # Existence is occupancy even for empty/unknown/failed-upload directories.
+        base = date_directory(run)
+        number = 1
+        while True:
+            directory = base if number == 1 else base + '-' + str(number)
+            result = subprocess.run([str(PACKAGE / 'rclone'), 'lsjson', REMOTE + directory, '--stat',
+                                     '--config', str(KEYS / 'daily-recovery.conf'), '--retries', '1',
+                                     '--low-level-retries', '3', '--contimeout', '30s', '--timeout', '5m'],
+                                    env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=360)
+            if result.returncode in (3, 4):
+                return directory
+            require(result.returncode == 0 and len(result.stdout) < 8192, 'directory absence unconfirmed')
+            value = json.loads(result.stdout)
+            # A directory stat is rooted at the exact requested directory;
+            # rclone crypt reports Name/Path as empty strings for that root.
+            require(isinstance(value, dict) and type(value.get('IsDir')) is bool
+                    and (value.get('Name') == directory or
+                         (value['IsDir'] and value.get('Name') == '' and value.get('Path') == '')),
+                    'invalid directory metadata')
+            number += 1
+
+    def remove_empty_date(self, record):
+        remote = REMOTE + record_directory(record)
+        result = subprocess.run([str(PACKAGE / 'rclone'), 'lsjson', remote,
+                                 '--config', str(KEYS / 'daily-recovery.conf'), '--retries', '1',
+                                 '--low-level-retries', '3', '--contimeout', '30s', '--timeout', '5m'],
+                                env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=360)
+        if result.returncode in (3, 4):
+            return
+        require(result.returncode == 0 and len(result.stdout) < 1024 * 1024, 'date metadata unavailable')
+        entries = json.loads(result.stdout)
+        require(isinstance(entries, list), 'invalid date metadata')
+        if not entries:
+            self.rclone('rmdir', remote)  # Nonrecursive; refuses a concurrent/unknown object.
+            self.journal.emit('empty_date_removed')
+
     def space(self):
-        # Reuse the capture estimator, adding compressed original + readback and
-        # verification scratch. All workflow files and capture staging must share a FS.
+        # Capture, original and local verifier scratch; no downloaded archive.
         import hermes_backup_bundle as bundle
         require(STATE.stat().st_dev == RUNTIME.stat().st_dev, 'state and runtime must share a filesystem')
         def inspect(args):
@@ -267,19 +359,25 @@ class Workflow:
             return json.loads(result.stdout)[0]
         image = inspect(['image', 'inspect', inspect(['inspect', 'hermes'])['Image']])
         budget = bundle.require_space(RUNTIME, image)
-        require(shutil.disk_usage(STATE).free >= 4 * budget + 1024**3,
-                'insufficient space for server round trip')
-        self.journal.emit('space_checked', required_bytes=4 * budget + 1024**3)
+        require(shutil.disk_usage(STATE).free >= 3 * budget + 1024**3,
+                'insufficient space for server backup')
+        self.journal.emit('space_checked', required_bytes=3 * budget + 1024**3)
 
     def rotate(self, current):
         records = load_receipts(STATE)
         candidates = rotation_candidates(records, current)
         for record in candidates:
             # No remote enumeration, sync, purge, recursive delete, or unreceipted paths.
-            self.rclone('deletefile', REMOTE + archive_name(record['run']))
+            self.rclone('deletefile', record_remote(record), legacy=record.get('cloud_layout') not in ('dated-v1', 'dated-v2'))
             record['cloud_deleted'] = True
             atomic_json(STATE / 'receipts' / (record['run'] + '.json'), record)
             self.journal.emit('cloud_copy_expired')
+        expired_dates = {record_directory(r): r for r in records
+                         if r.get('cloud_layout') in ('dated-v1', 'dated-v2') and r['cloud_deleted']}
+        for day, record in expired_dates.items():
+            if not any(r.get('cloud_layout') in ('dated-v1', 'dated-v2') and record_directory(r) == day
+                       and not r['cloud_deleted'] for r in records):
+                self.remove_empty_date(record)
         for record in records:
             if record['run'] == current:
                 continue
@@ -320,19 +418,20 @@ class Workflow:
         source = upload / archive_name(run)
         partial.rename(source)
         require(list(upload.iterdir()) == [source], 'upload directory must contain only the archive')
-        self.rclone('copy', upload, REMOTE)
-        downloaded = directory / 'readback.tar.gz'
-        self.rclone('copyto', REMOTE + source.name, downloaded, recovery=True)
-        require(private(downloaded).st_size == source.stat().st_size and digest(downloaded) == checksum,
-                'readback size or hash mismatch')
-        self.verify(downloaded)
+        cloud_directory = self.allocate_directory(run)
+        destination = REMOTE + cloud_directory + '/'
+        atomic_json(directory / 'cloud-target.json', {'run': run, 'cloud_directory': cloud_directory})
+        self.metadata(destination + source.name, source.stat().st_size, absent=True)
+        self.rclone('copy', upload, destination)
+        self.metadata(destination + source.name, source.stat().st_size)
         self.source_ok()
         receipt = {'run': run, 'created': stamp(run), 'bytes': source.stat().st_size, 'sha256': checksum,
                    'cloud_deleted': False, 'bundle_integrity_verified': True,
+                   'cloud_layout': 'dated-v2', 'cloud_directory': cloud_directory,
+                   'cloud_metadata_checked': True, 'cloud_roundtrip_verified': False,
                    'state_restored': False, 'restored_runtime_verified': False}
         atomic_json(STATE / 'receipts' / (run + '.json'), receipt)
-        self.journal.emit('cloud_roundtrip_verified', bytes=receipt['bytes'])
-        downloaded.unlink()  # Only this successful run's readback, never failed/unknown leftovers.
+        self.journal.emit('encrypted_upload_metadata_checked', bytes=receipt['bytes'])
         self.rotate(run)
         self.source_ok()
         self.journal.emit('success')
@@ -361,10 +460,17 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             # Root controls package/config updates; do not replace either while running.
             require(digest(PACKAGE / 'rclone') == RCLONE_SHA, 'unexpected rclone binary')
-            for name in ('upload.conf', 'recovery.conf'):
+            for name in ('upload.conf', 'recovery.conf', 'daily-upload.conf', 'daily-recovery.conf'):
                 require(private(KEYS / name).st_size <= 65536, 'oversized config')
             require(read_config(KEYS / 'upload.conf') == read_config(KEYS / 'recovery.conf'),
                     'working and recovery configurations differ')
+            daily = read_config(KEYS / 'daily-upload.conf', CRYPT_ROOT, 'false')
+            require(daily == read_config(KEYS / 'daily-recovery.conf', CRYPT_ROOT, 'false'),
+                    'daily working and recovery configurations differ')
+            old = read_config(KEYS / 'upload.conf')
+            require(daily[1] == old[1] and all(daily[0][k] == old[0][k]
+                    for k in ('type', 'filename_encryption', 'password', 'password2')),
+                    'daily encryption or transport changed')
             now = int(time.time())
             run = dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex
             journal = Journal(LOGS, run, now)
