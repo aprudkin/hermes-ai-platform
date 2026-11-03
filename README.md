@@ -14,6 +14,8 @@ It does not provision a new server or recreate private state from templates.
   transfer, the daily host backup and controlled image-update preparation.
 - `docs/` — current operating and recovery instructions.
 - `tests/` — checks for these tools, error paths and repository boundaries.
+- [`tools/mail_event_discovery/`](tools/mail_event_discovery/README.md) — generic
+  read-only text-only email helpers for the installed manager skill; no mail data.
 
 Live identity, memory, history, skills, credentials, application data and job
 settings remain in `/opt/hermes/data` on the host, mounted at `/opt/data`.
