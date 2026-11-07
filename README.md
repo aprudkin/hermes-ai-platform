@@ -1,7 +1,8 @@
 # Chebi: maintenance and recovery
 
 One persistent Hermes Agent. This repository holds its approved instruction
-snapshot, container reference, backup tools, recovery procedures and tests.
+snapshot, custom runtime source, container reference, backup tools, recovery
+procedures and tests. Source publication is not deployment or job activation.
 It does not provision a new server or recreate private state from templates.
 
 ## What is kept
@@ -14,11 +15,20 @@ It does not provision a new server or recreate private state from templates.
   transfer, the daily host backup and controlled image-update preparation.
 - `docs/` — current operating and recovery instructions.
 - `tests/` — checks for these tools, error paths and repository boundaries.
+- [`tools/mail_event_discovery/`](tools/mail_event_discovery/README.md) — generic
+  read-only text-only email helpers for the installed manager skill; no mail data.
 
-Live identity, memory, history, skills, credentials, application data and job
-settings remain in `/opt/hermes/data` on the host, mounted at `/opt/data`.
-They do not belong in Git. Ordinary container replacement must not erase them.
-A repository snapshot is not permission to overwrite the live instructions.
+- [`tools/` and `extensions/`](docs/runtime-reconciliation.md) — reviewed custom
+  runtime source, both calendars, voice, accounting, reminders and safe helpers;
+  source storage does not activate an integration.
+- [`skills/`](skills/README.md) — vetted instruction-source snapshots, with
+  private configuration replaced by placeholders.
+
+Live identity customizations, memory, history, credentials, application data and
+job settings remain in `/opt/hermes/data` on the host, mounted at `/opt/data`.
+Private instance state does not belong in Git. Ordinary container replacement
+must not erase it. Reviewed source/snapshots are versioned separately and are
+not permission to overwrite live instructions, configuration or skills.
 
 ## Commands
 
@@ -53,6 +63,7 @@ does not install or modify that launcher.
 
 ## Read before acting
 
+- [Runtime source reconciliation and exclusions](docs/runtime-reconciliation.md)
 - [State boundaries](docs/state-first.md)
 - [Runtime layout](docs/architecture.md)
 - [Maintenance and image updates](docs/operations.md)
@@ -78,4 +89,10 @@ Strict checks require Git, Bash, Python 3 with PyYAML, ripgrep, ShellCheck, Dock
 Compose and Go Task. No Docker daemon is needed for Compose rendering. The
 optional local rclone crypt integration test reports an explicit skip when
 rclone is absent. `./scripts/validate.sh --local` allows missing static tools
-and is not strict validation evidence. CI runs the strict gate.
+and is not strict validation evidence. Runtime suites also require the isolated
+packages pinned in `requirements-test.txt`, FFmpeg/ffprobe and DejaVu fonts.
+Voice/image contract tests use a real Hermes checkout at
+`345cd2b057a452236de401d3534b8502a7465e8d` via `HERMES_SRC`; this matches the
+reviewed runtime image's source tag, not a request to upgrade/deploy Hermes.
+CI prepares those test dependencies outside the project source and runs the
+same strict gate. No real credentials or live profile are required.

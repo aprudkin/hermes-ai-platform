@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "stage": "fixture",
+  "delivery_enabled": false,
+  "timezone": "Europe/Moscow",
+  "hour": 10,
+  "confirmer_id": "fixture-owner",
+  "seed_range": [
+    26,
+    59
+  ],
+  "cycles": [
+    {
+      "start": "2030-01-10",
+      "end": "2030-01-14"
+    }
+  ],
+  "events": [],
+  "question": null,
+  "sent": [],
+  "last_delivery_day": null,
+  "forecast_policy": {
+    "mode": "temporary_fixed",
+    "days": 28,
+    "tolerance": 1
+  },
+  "fixture_notice": "SYNTHETIC ONLY: invented medical dates, no real person, route, receipt or account; delivery disabled."
+}

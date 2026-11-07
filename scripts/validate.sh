@@ -18,11 +18,38 @@ require_artifacts() {
     systemd/hermes-backup.service systemd/hermes-backup.timer
     docs/state-first.md docs/architecture.md docs/operations.md
     docs/personal-backup.md docs/backup-restore.md docs/cloud-backup.md docs/server-backup.md
+    docs/runtime-reconciliation.md requirements-test.txt skills/README.md
+    tools/event_calendar/__main__.py tools/event_calendar/caption.py
+    tools/cycle_tracker/scripts/cycle_engine.py tools/cycle_tracker/scripts/render_calendar.py
+    tools/cycle_tracker/scripts/cycle_reminder_runner.py tools/cycle_tracker/scripts/cycle_buttons.py
+    tools/system_status/hermes_manager_status.py
+    tools/accounting/scripts/cash_ledger_monitor.py tools/accounting/scripts/cash_review_sender.py
+    tools/accounting/scripts/bablomat_daily_digest.py tools/meter_reminders/scripts/meter_reminder.py
+    extensions/elena-addressing/plugin/__init__.py extensions/elena-addressing/scripts/elena_addressing.py
+    tests/accounting_test.sh tests/meter_reminders_test.sh tests/elena_addressing_test.sh
+    tools/agent_mail/agentmail_setup.py tools/browser_bridge/mac_browser_client.py
+    tools/shared_tasks/tasks.example.json
+    extensions/deepgram-voice/hermes_deepgram_voice/stt.py
+    extensions/deepgram-voice/hermes_deepgram_voice/tts.py
+    extensions/image-generation/openai-codex-25/__init__.py
+    skills/software-development/ponytail/SKILL.md
+    skills/software-development/ponytail-audit/SKILL.md
     tests/run.sh
   )
   for path in "${required[@]}"; do
     if [[ ! -s "$repo_root/$path" ]]; then
       error "required artifact is missing or empty: $path" || true
+      failed=1
+    fi
+  done
+  local excluded=(
+    scripts/monitor_yandex_jira.py scripts/monitor_yandex_jira_digest.py
+    scripts/jira_daily_brief.py scripts/jira_standup_brief.py scripts/setup_yandex_jira_secret.py
+    tools/yandex_jira skills/productivity/yandex-jira-mail-monitor
+  )
+  for path in "${excluded[@]}"; do
+    if [[ -e "$repo_root/$path" ]]; then
+      error "owner-excluded Jira component present: $path" || true
       failed=1
     fi
   done
@@ -60,8 +87,10 @@ validate_python() {
 from pathlib import Path
 import sys
 root = Path(sys.argv[1])
-for directory in ('scripts', 'tests'):
-    for path in sorted((root / directory).glob('*.py')):
+for directory in ('scripts', 'tests', 'tools', 'extensions', 'skills'):
+    for path in sorted((root / directory).rglob('*.py')):
+        if any(part in {'.venv', '__pycache__', '.pytest_cache'} for part in path.parts):
+            continue
         compile(path.read_bytes(), str(path), 'exec')
 PY
   printf 'PASS Python syntax (no execution)\n'
@@ -82,8 +111,9 @@ validate_compose() {
 validate_secrets() {
   command -v rg >/dev/null 2>&1 || { error 'secret scan requires ripgrep'; return 1; }
   local status pattern
-  pattern='-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----|^[[:space:]]*(OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|GITHUB_TOKEN|GH_TOKEN)=[^[:space:]#].*|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}'
-  if rg --quiet --hidden --no-ignore --glob '!.git/**' --glob '!.generated/**' \
+  # Runtime lookups are source expressions, not persisted credential values.
+  pattern='-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----|^[[:space:]]*(OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|GITHUB_TOKEN|GH_TOKEN)=(?!\$\(|"\$\{[A-Z_][A-Z0-9_]*(?::-)?\}"[[:space:]]*(?:#.*)?$)[^[:space:]#].*|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}'
+  if rg --pcre2 --quiet --hidden --no-ignore --glob '!.git/**' --glob '!.generated/**' \
       -- "$pattern" "$repo_root"; then
     error 'credential-shaped content found; values suppressed'
     return 1

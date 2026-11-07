@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Initial host-local installation only; never contact cloud or enable/start units."""
 import argparse
+import configparser
 import os
 from pathlib import Path
 import shutil
@@ -8,7 +9,7 @@ import subprocess
 import sys
 
 from hermes_cloud_backup import digest, private_copy, read_config, require
-from hermes_server_backup import RCLONE_SHA, trusted_tree
+from hermes_server_backup import CRYPT_ROOT, RCLONE_SHA, trusted_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = Path('/usr/local/lib/hermes-backup')
@@ -65,6 +66,15 @@ def install(args):
     private_copy(Path(args.upload_config), KEYS / 'upload.conf', 'working config', 65536)
     private_copy(Path(args.recovery_config), KEYS / 'recovery.conf', 'recovery config', 65536)
     require(read_config(KEYS / 'upload.conf') == read_config(KEYS / 'recovery.conf'), 'installed configs differ')
+    for source, target in (('upload.conf', 'daily-upload.conf'), ('recovery.conf', 'daily-recovery.conf')):
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(KEYS / source)
+        config['hermes-backup']['remote'] = CRYPT_ROOT
+        config['hermes-backup']['directory_name_encryption'] = 'false'
+        with (KEYS / target).open('x') as stream:
+            config.write(stream)
+    require(read_config(KEYS / 'daily-upload.conf', CRYPT_ROOT, 'false') ==
+            read_config(KEYS / 'daily-recovery.conf', CRYPT_ROOT, 'false'), 'installed daily configs differ')
     for name in ('hermes-backup.service', 'hermes-backup.timer'):
         (UNITS / name).write_bytes((ROOT / 'systemd' / name).read_bytes())
         (UNITS / name).chmod(0o644)
