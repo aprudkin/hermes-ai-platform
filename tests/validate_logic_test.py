@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -15,7 +16,7 @@ class ValidationTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.repo = self.base / 'repo'
-        shutil.copytree(ROOT, self.repo, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+        shutil.copytree(ROOT, self.repo, ignore=shutil.ignore_patterns('.git', '__pycache__', '.terraform'))
         self.bin = self.base / 'bin'
         self.bin.mkdir()
         for name in ('shellcheck', 'docker', 'task'):
@@ -46,6 +47,37 @@ class ValidationTests(unittest.TestCase):
 
     def test_shellcheck_failure_is_not_swallowed(self):
         self.assertNotEqual(self.run_gate('--static', FAIL_TOOL='shellcheck').returncode, 0)
+
+    def test_later_shell_syntax_error_fails_without_shellcheck(self):
+        (self.bin / 'shellcheck').write_text('#!/bin/sh\nexit 127\n')
+        for directory in ('scripts', 'tests'):
+            with self.subTest(directory=directory):
+                broken = self.repo / directory / 'zz-broken.sh'
+                broken.write_text('#!/bin/bash\nif then\n')
+                result = self.run_gate('--local')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('PASS bash syntax', result.stdout)
+                self.assertIn('zz-broken.sh', result.stderr)
+                broken.unlink()
+
+    def test_ci_wrapper_needs_yaml_but_not_ansible(self):
+        ansible = self.bin / 'ansible-playbook'
+        ansible.write_text('#!/bin/sh\nexit 127\n')
+        ansible.chmod(0o755)
+        wrapper = self.repo / 'tests/ci_toolchain_test.sh'
+        result = subprocess.run(['bash', str(wrapper)], env=self.env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('SKIP', result.stdout)
+        self.assertIn('Ran 2 tests', result.stderr)
+        python = self.bin / 'python3'
+        python.write_text('#!/bin/sh\nexec "' + sys.executable + '" -S "$@"\n')
+        python.chmod(0o755)
+        result = subprocess.run(['bash', str(wrapper)], env=self.env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No module named', result.stderr)
+        self.assertIn('yaml', result.stderr)
 
     def test_compose_failure_is_not_swallowed(self):
         self.assertNotEqual(self.run_gate('--static', FAIL_TOOL='docker').returncode, 0)

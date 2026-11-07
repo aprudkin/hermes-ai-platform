@@ -42,8 +42,10 @@ need_command() {
 }
 
 validate_shell() {
-  local files=("$repo_root"/scripts/*.sh "$repo_root"/tests/*.sh)
-  bash -n "${files[@]}"
+  local file files=("$repo_root"/scripts/*.sh "$repo_root"/tests/*.sh)
+  for file in "${files[@]}"; do
+    bash -n "$file"
+  done
   printf 'PASS bash syntax\n'
   if need_command shellcheck; then
     (cd "$repo_root" && shellcheck "${files[@]}")
