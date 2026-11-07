@@ -11,7 +11,6 @@ import gzip
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import shutil
 import signal
@@ -21,6 +20,8 @@ import sys
 import tarfile
 import tempfile
 import time
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
 
 FORMAT = "hermes-recovery-bundle"
 PERSONAL_FORMAT = "hermes-personal-bundle"
@@ -79,9 +80,8 @@ def profile_for(container):
     return cmd[2]
 
 
-def validate_container(container, root, name):
-    require(container.get("Name") == "/" + name and container.get("State", {}).get("Running")
-            and not container["State"].get("Paused"), "container must be running and initially unpaused")
+def validate_runtime(container, root):
+    """Supported Docker metadata, independent of live state and local paths."""
     require(HEX.fullmatch(container.get("Image", "")), "invalid image identity")
     mounts = container.get("Mounts", [])
     require(len(mounts) == 1, "unsupported mounts")
@@ -120,7 +120,13 @@ def validate_container(container, root, name):
     require(host.get("ReadonlyPaths") is None or sorted(host["ReadonlyPaths"]) == sorted(readonly),
             "custom readonly paths unsupported")
     require(not host.get("ConsoleSize") or host["ConsoleSize"] == [0, 0], "custom console unsupported")
-    profile = profile_for(container)
+    return profile_for(container)
+
+
+def validate_container(container, root, name):
+    require(container.get("Name") == "/" + name and container.get("State", {}).get("Running")
+            and not container["State"].get("Paused"), "container must be running and initially unpaused")
+    profile = validate_runtime(container, root)
     for directory in (root, root / "app", root / "data"):
         require(directory.is_dir() and not directory.is_symlink(), "runtime directories must be real directories")
     for relative in ("app/docker-compose.yml", "app/gateway.env", "data/config.yaml"):
@@ -162,6 +168,7 @@ def escape_compose(value):
 
 
 def restore_compose(container, root, tag, personal=False):
+    validate_runtime(container, root)
     config, host = container["Config"], container["HostConfig"]
     restart = host.get("RestartPolicy", {})
     policy = restart.get("Name") or "no"
@@ -169,7 +176,7 @@ def restore_compose(container, root, tag, personal=False):
     if policy == "on-failure" and restart.get("MaximumRetryCount"):
         policy += ":" + str(restart["MaximumRetryCount"])
     service = {"image": tag, "pull_policy": "missing" if personal else "never", "container_name": "hermes",
-               "network_mode": "host", "restart": policy,
+               "network_mode": host["NetworkMode"], "restart": policy,
                "volumes": [{"type": "bind", "source": str(root / "data"),
                             "target": "/opt/data", "read_only": False}],
                "environment": config.get("Env") or [],
@@ -638,7 +645,8 @@ def validate_image(path, expected):
         zero_tail(archive.fileobj)
 
 
-def verify(bundle, scope=None, progress=None):
+@contextmanager
+def verified_bundle(bundle, scope=None, progress=None):
     progress = progress or (lambda label: None)
     progress("Decompressing archive and checking payload hashes")
     require(scope in (None, "personal", "full"), "unsupported backup scope")
@@ -648,7 +656,7 @@ def verify(bundle, scope=None, progress=None):
     with tempfile.TemporaryDirectory(prefix="hermes-verify-") as tmp:
         stage = Path(tmp)
         seen, hashes, metadata = set(), {}, {}
-        with gzip.open(bundle, "rb") as compressed:
+        with gzip.GzipFile(bundle, "rb") as compressed:
             with tarfile.open(fileobj=compressed, mode="r|") as archive:
                 for member in archive:
                     name = safe_name(member.name)
@@ -660,6 +668,7 @@ def verify(bundle, scope=None, progress=None):
                         require(member.size <= SMALL_LIMIT, "metadata exceeds size limit")
                     digest, size = hashlib.sha256(), 0
                     stream = archive.extractfile(member)
+                    assert stream is not None  # Only regular members admitted above.
                     with (stage / name).open("wb") as out:
                         while block := stream.read(1024 * 1024):
                             size += len(block)
@@ -716,7 +725,12 @@ def verify(bundle, scope=None, progress=None):
         if not personal:
             progress("Checking saved Docker image identity and layer hashes")
             validate_image(stage / "image.tar", dict(image, variant=inspected_image.get("Variant") or ""))
-    return manifest
+        yield stage, manifest
+
+
+def verify(bundle, scope=None, progress=None):
+    with verified_bundle(bundle, scope, progress) as (_, manifest):
+        return manifest
 
 
 def restore_state(bundle, destination):
@@ -732,19 +746,11 @@ def restore_state(bundle, destination):
             "restore destination needs an absolute path and a real existing parent")
     require(not os.path.lexists(destination), "restore destination already exists")
     require(b"GNU tar" in run(["tar", "--version"]), "restore requires GNU tar on compatible Linux")
-    with tempfile.TemporaryDirectory(prefix="hermes-restore-") as tmp:
-        # Verify and consume the same private copy, not a mutable source path.
-        private = Path(tmp) / "bundle.tar.gz"
-        shutil.copyfile(bundle, private)
-        manifest = verify(private)
+    with verified_bundle(bundle) as (stage, manifest):
         destination.mkdir(mode=0o700)  # exclusive; refuse a concurrently created target
         recovery = destination / ".recovery"
-        recovery.mkdir(mode=0o700)
-        with tarfile.open(private, "r:gz") as archive:
-            for member in archive:
-                # verify() admitted only fixed regular outer payload names.
-                with archive.extractfile(member) as source, (recovery / member.name).open("xb") as out:
-                    shutil.copyfileobj(source, out)
+        # Consume only the checked private payloads, never reopen the source.
+        shutil.move(str(stage), recovery)
         run(["tar", "--extract", "--file", str(recovery / "state.tar"),
              "--directory", str(destination), "--numeric-owner", "--same-owner",
              "--same-permissions", "--acls", "--xattrs", "--xattrs-include=*"],

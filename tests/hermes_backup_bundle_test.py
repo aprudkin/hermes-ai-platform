@@ -235,6 +235,46 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
                                         str(destination)], env=self.env, capture_output=True)
                 self.assertNotEqual(again.returncode, 0)
 
+    def test_restore_reuses_verified_payloads_after_source_changes(self):
+        spec = importlib.util.spec_from_file_location('bundle', HELPER)
+        assert spec is not None and spec.loader is not None
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for scope in ('full', 'personal'):
+            with self.subTest(scope=scope):
+                bundle = self.bundle(scope=scope)
+                target = self.base / ('staging-' + scope)
+                verified = {}
+                validate = helper.validate_state
+
+                def check(path, profile, personal=False):
+                    validate(path, profile, personal=personal)
+                    self.assertFalse(target.exists())
+                    verified['stage'] = path.parent
+                    verified['state'] = path.read_bytes()
+                    self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+                    bundle.write_bytes(b'source replaced after payload verification')
+
+                def command(args, **kwargs):
+                    if args == ['tar', '--version']:
+                        return b'GNU tar'
+                    self.assertEqual(Path(args[args.index('--file') + 1]).read_bytes(), verified['state'])
+                    return b''
+
+                with mock.patch.object(helper, 'validate_state', side_effect=check), \
+                     mock.patch.object(helper.gzip, 'GzipFile', wraps=helper.gzip.GzipFile) as decompressions, \
+                     mock.patch.object(helper.tarfile, 'open', wraps=helper.tarfile.open) as archives, \
+                     mock.patch.object(helper, 'run', side_effect=command) as commands:
+                    manifest = helper.restore_state(bundle, target)
+                self.assertEqual(decompressions.call_count, 1)
+                self.assertEqual(decompressions.call_args.args[0], bundle)
+                self.assertEqual(archives.call_count, 3 if scope == 'full' else 2)
+                self.assertEqual(commands.call_count, 3)
+                self.assertFalse(verified['stage'].exists())
+                self.assertEqual((target / '.recovery/state.tar').read_bytes(), verified['state'])
+                self.assertEqual((target / '.recovery/image.tar').exists(), scope == 'full')
+                self.assertEqual(manifest['source']['profile'], 'manager')
+
     def test_restore_rejects_corruption_without_creating_target(self):
         bundle = self.bundle()
         bad = self.rewrite_bundle(bundle, omit='state.tar')
@@ -697,6 +737,22 @@ os.execv(os.environ['REAL_TAR'], [os.environ['REAL_TAR']] + args)
             manifest = json.load(archive.extractfile("manifest.json"))
         manifest["payloads"][name] = {"sha256": hashlib.sha256(contents).hexdigest(), "size": len(contents)}
         return self.rewrite_bundle(bundle, {name: contents, "manifest.json": json.dumps(manifest).encode()})
+
+    def test_unsupported_runtime_rejected_even_with_valid_payload_hashes(self):
+        for scope in ('full', 'personal'):
+            bundle = self.bundle(scope=scope)
+            for field, value in (('NetworkMode', 'bridge'), ('Privileged', True)):
+                with self.subTest(scope=scope, field=field):
+                    container = json.loads(json.dumps(self.container))
+                    container['HostConfig'][field] = value
+                    bad = self.rewrite_with_rehashed_payload(
+                        bundle, 'container-inspect.json', json.dumps(container).encode())
+                    result = self.verify(bad)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'unsupported', result.stderr)
+        self.container['HostConfig']['NetworkMode'] = 'bridge'
+        self.save_fixture()
+        self.assertNotEqual(self.capture().returncode, 0)
 
     def test_nested_traversal_duplicate_and_missing_app_rejected_even_with_valid_hashes(self):
         bundle = self.bundle()
