@@ -2,22 +2,46 @@
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import unittest
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def retired_assets(root):
+    retired = ('terraform', 'ansible', 'installer', 'configs', 'infrastructure',
+               'prompts', '.pi', 'docs/agents', 'docs/superpowers',
+               'profiles/devops', 'profiles/coding', 'profiles/research',
+               'CHATGPT_CONVERSATION.md', 'CODEX_SETUP_PROMPT.md',
+               'CODEX_CLI_START.md', 'PROJECT_AUDIT.md',
+               'INSTALLATION_GUIDE.md', 'QUICKSTART.md', 'scripts/telegram_env.py')
+    tracked = subprocess.check_output(
+        ['git', '-C', str(root), 'ls-files', '-z', '--', *retired], text=True)
+    return [name for name in tracked.split('\0') if name]
+
+
 class CurrentScopeTests(unittest.TestCase):
     def test_retired_platform_assets_are_absent(self):
-        retired = ('terraform', 'ansible', 'installer', 'configs', 'infrastructure',
-                   'prompts', '.pi', 'docs/agents', 'docs/superpowers',
-                   'profiles/devops', 'profiles/coding', 'profiles/research',
-                   'CHATGPT_CONVERSATION.md', 'CODEX_SETUP_PROMPT.md',
-                   'CODEX_CLI_START.md', 'PROJECT_AUDIT.md',
-                   'INSTALLATION_GUIDE.md', 'QUICKSTART.md', 'scripts/telegram_env.py')
-        remaining = [name for name in retired if (ROOT / name).exists()]
-        self.assertEqual(remaining, [], 'Retired platform material remains in the current tree')
+        self.assertEqual(retired_assets(ROOT), [], 'Retired platform material remains tracked')
+
+    def test_scope_ignores_local_cache_but_rejects_tracked_terraform(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '--quiet', str(root)], check=True)
+            (root / '.gitignore').write_text((ROOT / '.gitignore').read_text())
+            cache = root / 'terraform/.terraform/provider'
+            cache.parent.mkdir(parents=True)
+            cache.write_text('local provider fixture')
+            subprocess.run(['git', '-C', str(root), 'check-ignore', '--quiet', str(cache)], check=True)
+            self.assertEqual(retired_assets(root), [])
+            source = root / 'terraform/main.tf'
+            source.write_text('# retired source fixture\n')
+            subprocess.run(['git', '-C', str(root), 'add', 'terraform/main.tf'], check=True)
+            self.assertEqual(retired_assets(root), ['terraform/main.tf'])
+            subprocess.run(['git', '-C', str(root), 'add', '--force', str(cache)], check=True)
+            self.assertIn('terraform/.terraform/provider', retired_assets(root))
+            self.assertEqual(cache.read_text(), 'local provider fixture')
 
     def test_current_identity_and_recovery_entrypoints_remain(self):
         required = ('profiles/manager/SOUL.md', 'docker/docker-compose.yml',
