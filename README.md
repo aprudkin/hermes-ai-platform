@@ -12,7 +12,7 @@ It does not provision a new server or recreate private state from templates.
   defaults to the active `manager` profile. It is not a replacement for the
   deployed configuration saved in a recovery bundle.
 - `scripts/` and `systemd/` — capture, verify, offline restore, encrypted cloud
-  transfer, the daily host backup and controlled image-update preparation.
+  transfer, the daily host backup and explicitly gated image updates.
 - `docs/` — current operating and recovery instructions.
 - `tests/` — checks for these tools, error paths and repository boundaries.
 - [`tools/mail_event_discovery/`](tools/mail_event_discovery/README.md) — generic
@@ -52,8 +52,13 @@ SSH alias for an account with the required Docker/read permissions.
 - `task verify:hermes` — inspect the trusted `HERMES_BACKUP_FILE`; no host access.
 - `task restore:hermes:state` — restore into a **new** `HERMES_RESTORE_DIR` on
   compatible Linux; never starts the agent or its jobs.
-- `task update:hermes` — full backup and reviewed local image-pin preparation;
-  no commit, push or deployment.
+- `task update:hermes` / `task update:hermes:prepare` — full backup and reviewed
+  local image-pin preparation; **no deployment**, commit or push.
+- `task update:hermes:inspect` — read deployed update-review fingerprints over SSH.
+- `task update:hermes:apply` — **replace the running container** with the exact
+  reviewed image after a fresh full backup; requires explicit confirmation and
+  a private deployment review. See [the update procedure](docs/operations.md#apply-a-reviewed-image).
+  No automatic retry/rollback; functional acceptance is reported separately.
 - `task validate` / `./scripts/validate.sh --all` — strict local checks and tests;
   no live host, cloud or Telegram operations.
 

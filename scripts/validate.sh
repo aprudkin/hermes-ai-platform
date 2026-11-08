@@ -15,6 +15,7 @@ require_artifacts() {
     scripts/hermes_backup.sh scripts/hermes_backup_bundle.py scripts/hermes_backup_progress.py
     scripts/hermes_cloud_backup.py scripts/hermes_server_backup.py
     scripts/hermes_server_backup_entry.py scripts/install_server_backup.py scripts/hermes_upgrade.sh
+    scripts/hermes_apply.py tests/hermes_apply_test.py tests/hermes_apply_test.sh
     systemd/hermes-backup.service systemd/hermes-backup.timer
     docs/state-first.md docs/architecture.md docs/operations.md
     docs/personal-backup.md docs/backup-restore.md docs/cloud-backup.md docs/server-backup.md

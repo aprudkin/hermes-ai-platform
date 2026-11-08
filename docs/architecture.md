@@ -45,6 +45,7 @@ loopback binding and inspect the host's actual exposure separately.
 | Explicit cloud copy | Upload an existing full bundle through approved crypt, recovery-config readback and verification | Encrypt local files, capture new state, schedule or rotate copies |
 | Daily host systemd backup | Capture outside the container, crypt upload/readback, narrow successful-receipt retention | Run as a Hermes job, bootstrap the agent, restore it or test its behavior |
 | Image-update preparation | Verified full backup, release/review gate, local image-pin change and strict validation | Commit, push or apply the pin to the host |
+| Explicit image apply | Fresh full off-server backup, reviewed source/digest, image-only deployed config change, same-service recreation and runtime checks | Bootstrap, Git publication, automatic retry/rollback, or claim functional acceptance from health |
 
 Full bundles retain the exact runtime image and dependencies; personal bundles
 exclude the image and recognized regeneration paths. Both contain secrets and

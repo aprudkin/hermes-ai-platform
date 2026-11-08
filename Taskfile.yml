@@ -61,7 +61,23 @@ tasks:
       - python3 scripts/hermes_backup_bundle.py restore-state "${HERMES_BACKUP_FILE:?Set HERMES_BACKUP_FILE}" "${HERMES_RESTORE_DIR:?Set HERMES_RESTORE_DIR to a new absolute directory}"
 
   update:hermes:
-    aliases: ['hermes:update']
-    desc: Back up and prepare a validated image pin; never commit, push or deploy
+    aliases: ['hermes:update', 'update:hermes:prepare']
+    desc: PREPARE ONLY — back up and validate a local image pin; never deploy
     cmds:
       - ./scripts/hermes_upgrade.sh
+
+  update:hermes:inspect:
+    desc: Read deployed update-review fingerprints over SSH; no backup or runtime changes
+    cmds:
+      - python3 scripts/hermes_apply.py --inspect
+
+  update:hermes:apply:
+    desc: APPLY — fresh full backup and explicit reviewed container update over SSH
+    summary: |
+      Requires HERMES_CONFIRM_UPDATE=1 and a private HERMES_UPGRADE_REVIEW_FILE.
+      Run on an independent off-server controller, never inside the agent container.
+      Preserves deployed configuration; replaces only its literal image pin.
+      No Git publication, automatic retry or rollback. Functional acceptance remains separate.
+      See docs/operations.md for the supported layout, review fields and failure recovery.
+    cmds:
+      - python3 scripts/hermes_apply.py

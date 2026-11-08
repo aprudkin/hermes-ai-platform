@@ -121,7 +121,8 @@ runtime functionally tested** in every report. None implies the next.
 
 ## Image-update preparation only
 
-`task update:hermes` (alias `task hermes:update`) captures and verifies a **full**
+`task update:hermes` (aliases `task hermes:update` and
+`task update:hermes:prepare`) captures and verifies a **full**
 backup before querying GitHub for the latest stable
 `NousResearch/hermes-agent` release. It prepares a local image-pin change only:
 **no automatic commit, push or deployment**. `CONFIRM_PUSH` and `CONFIRM_DEPLOY`
@@ -158,6 +159,91 @@ diff for inspection; it does not reset Git, weaken validation or publish it.
 Correct/review the diff and rerun the strict gate. Rerunning preparation is not
 a deployment retry, and its clean-checkout requirement rejects a leftover diff.
 
+## Apply a reviewed image
+
+Use a terminal on an independent computer with this checkout, its declared
+validation dependencies, SSH, Python 3 and Bash. It need not be this coding
+session or the owner's usual computer. **Do not run the workflow inside the
+agent container**: capture pauses that container. A host-local or source-mounted
+backup directory is not off-server protection. The confirmation below attests
+that the controller and backup destination are independent and the maintenance
+window is authorized; the script cannot establish physical storage independence.
+
+There is no chat self-update bridge. Such a bridge would need a separately
+approved external executor; do not give the agent a Docker socket or host SSH
+keys just to run this command.
+
+The supported host layout is the existing single `hermes` Compose service,
+`manager` profile, `/opt/hermes/app/docker-compose.yml`,
+`/opt/hermes/app/gateway.env` and `/opt/hermes/data:/opt/data`.
+Docker Compose must support `config --hash/--format json` and `up --wait`.
+The SSH account needs Docker access and permission to read state and update
+`/opt/hermes/app`; there is no automatic sudo. Exactly one replica with the
+fixed `hermes` container name is required.
+The running container must belong to that exact single Compose file. Its
+effective config hash must match the running container's Compose label.
+Alternate Compose stacks, interpolated/quoted image fields, drift, unsupported
+mounts and unbacked image-layer customizations fail closed rather than being
+silently reconstructed. Reconcile them explicitly before updating.
+
+1. Review the release and prepare/validate the local pin as above. Preparation
+   uses hashes of the **old** contract bytes; after preparation, refresh the
+   review hashes against the **candidate** and rerun strict validation. Source
+   publication is a separate workflow, not a deployment prerequisite or proof.
+2. Run `task update:hermes:inspect`. This performs read-only SSH inspection,
+   with no backup, pull or recreation. Save its JSON as the `source` object in
+   the private review. It contains container/image IDs and hashes of deployed
+   Compose, gateway inputs and live identity; no credentials or file contents.
+3. In that same private JSON, retain all preparation-review fields and add:
+   - `image`: the exact reviewed official image
+     `nousresearch/hermes-agent:<tag>@sha256:<64 lowercase hex digits>`.
+     Resolve and review its digest for the existing platform; do not use a
+     floating tag alone. The tag must match the prepared local pin.
+   - `source`: the complete object returned by inspection.
+   - `maintenance_window`: a nonempty description of the authorized window.
+   - `rollback_plan`: a nonempty, reviewed recovery plan, including the
+     possibility of migrated databases and isolated full-bundle recovery.
+   These are operator attestations, not automatic compatibility analysis or
+   calendar enforcement. Store the file **outside the repository**, privately.
+4. During that window, from the independent controller:
+
+   ```sh
+   HERMES_UPGRADE_REVIEW_FILE=/private/path/update-review.json \
+   HERMES_CONFIRM_UPDATE=1 task update:hermes:apply
+   ```
+
+   The same SSH overrides and `HERMES_BACKUP_DIR` as capture apply. This command
+   reruns strict validation and checks the reviewed source, then captures and
+   verifies a new **full** bundle in a private `update-*` subdirectory of the
+   backup destination. It rejects a source mismatch or a capture taking over
+   30 minutes; old/preparation-time bundles cannot satisfy this gate.
+5. Apply takes the existing capture lock, checks source fingerprints again,
+   pulls the digest-pinned image, checks platform and rechecks the source.
+   It saves the original Compose/gateway files and a durable intent under
+   `/opt/hermes/app/update-*/` (private directory, mode-0600 files). It atomically
+   changes **only the literal deployed image pin**, verifies the effective
+   configuration differs only by image, and runs Compose for the same project
+   and service with no build, dependencies or volume deletion. It does not copy
+   repository reference configuration, identity, skills or jobs to the host.
+6. A successful apply reports the observed image, manager profile, supported
+   mount, unchanged identity/gateway inputs and Docker health. Its exit zero
+   means **apply checks passed**, while `functional_acceptance: pending` remains
+   explicit. Verify actual memory/history, custom applications/dependencies,
+   approved jobs and retained cancellations, model inference and authorized
+   Telegram behavior before accepting the update. The local Compose-owner
+   check cannot rule out a polling copy on another host.
+
+On failure or SSH loss, deployment may be partial or unknown. Do not blindly
+rerun, restore the old Compose file, or start the old image. Inspect the actual
+container/image/configuration and the private `intent.json`; a completed apply
+also has `result.json`. An incomplete intent blocks subsequent apply attempts.
+After manually reconciling the observed state and authorizing a new attempt,
+retain the entire old attempt directory in a separately named private archive
+(outside the `app/update-*` match), then inspect and review afresh. Do not fake a
+success receipt or delete the evidence to bypass the gate. Even a recorded
+successful apply is not functional acceptance. No failure causes an automatic
+retry, rollback or data restore.
+
 ### Apply and acceptance are separate operator decisions
 
 1. Inspect the candidate and validation output, update release-specific contracts
@@ -168,9 +254,10 @@ a deployment retry, and its clean-checkout requirement rejects a leftover diff.
    preparation-time backup may already be stale.
 3. Review the existing host's actual Compose definition, protected inputs, image,
    selected `manager` profile and persistent mount. This repository has no
-   automatic apply/bootstrap command. A host-specific image pull/service
-   recreation must be separately reviewed and authorized; do not replace live
-   configuration or identity with a generic reference file.
+   bootstrap command. Use the explicitly authorized apply workflow above only
+   for its supported deployed layout; other host-specific recreation must be
+   separately reviewed. Do not replace live configuration or identity with a
+   generic reference file.
 4. On failure, record the result and inspect actual image/service state and any
    partial changes before reauthorizing a retry. Local pin equality is not
    evidence that the host was updated.

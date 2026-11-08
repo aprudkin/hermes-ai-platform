@@ -171,4 +171,6 @@ main() {
   printf 'Review the diff, publish separately, then authorize an explicit deployment; see docs/operations.md.\n'
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
