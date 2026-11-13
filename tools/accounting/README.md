@@ -6,15 +6,29 @@ Bablomat digest. This is **not** Yandex/Jira mail monitoring. Nothing here insta
 or activates a service, plugin or schedule. The digest schedule remains cancelled;
 the six-hour escalation remains paused and activity scanning remains retired.
 
+## Portable accounting (without unrelated conversations)
+
+[`PORTABILITY.md`](PORTABILITY.md) describes the offline `export`, `verify` and
+`import` helper in `scripts/bablomat_portable.py`. It keeps the complete accounting
+ledger and delivery audit, filters linked source evidence out of the shared Hermes
+history, preserves Telegram access settings, and prepares a new inactive profile.
+The cleaned [Bablomat skill](skills/bablomat-accounting/SKILL.md) contains accounting
+rules without the old infrastructure/social scheduling instructions. Neither the
+helper nor source publication captures a live profile or activates a bot.
+
 ## Offline verification
 
 ```sh
-PYTHON=python3 sh tests/accounting_test.sh
+HERMES_SRC=/path/to/pinned/hermes PYTHON=python3 sh tests/accounting_test.sh
 ```
 
 Run from the repository root. Uses Python 3.10+ standard library `unittest`, SQLite
 and system IANA timezone data. The inherited test guard blocks socket operations
 and any non-temporary SQLite/credential access, including child Python processes.
+Portability tests additionally require Python 3.11+, PyYAML, python-dotenv and the
+same real Hermes checkout pinned in the root README, for schema reopen/append
+coverage. An in-memory SQLite schema probe is allowed; non-temporary file-backed
+state and socket operations remain blocked.
 Fixtures explicitly inject synthetic routing IDs and temporary profiles; those IDs
 are not production defaults. Long source-shaped report fixtures have new sample
 amounts/dates and fictitious participants/holders. Ordinary small arithmetic

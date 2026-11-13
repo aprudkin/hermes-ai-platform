@@ -10,6 +10,8 @@ def audit(event, args):
         raise AssertionError('Offline test attempted network access')
     if event in ('open', 'sqlite3.connect') and args and isinstance(args[0], (str, bytes, os.PathLike)):
         raw = os.fsdecode(args[0])
+        if event == 'sqlite3.connect' and raw == ':memory:':
+            return  # Hermes checks its schema in RAM; no filesystem access.
         if raw.startswith('file:'):
             raw = raw[5:].split('?', 1)[0]
         path = Path(raw).resolve()

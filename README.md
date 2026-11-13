@@ -18,6 +18,8 @@ It does not provision a new server or recreate private state from templates.
 - [`tools/mail_event_discovery/`](tools/mail_event_discovery/README.md) — generic
   read-only text-only email helpers for the installed manager skill; no mail data.
 
+- [Portable Bablomat accounting](tools/accounting/PORTABILITY.md) — offline
+  accounting-only export/import and a cleaned skill; no live capture or activation.
 - [`tools/` and `extensions/`](docs/runtime-reconciliation.md) — reviewed custom
   runtime source, both calendars, voice, accounting, reminders and safe helpers;
   source storage does not activate an integration.

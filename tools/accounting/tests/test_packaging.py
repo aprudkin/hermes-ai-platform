@@ -25,6 +25,11 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('--home', result.stderr)
         self.assertIn('--chat-id', result.stderr)
 
+    def test_inherited_offline_guard_allows_memory_only_schema_checks(self):
+        code = "import sqlite3; db = sqlite3.connect(':memory:'); db.execute('CREATE TABLE fixture(id INTEGER)')"
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_inherited_offline_guard_blocks_sockets_and_nonfixture_databases(self):
         code = "import socket; socket.create_connection(('127.0.0.1', 9))"
         result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
